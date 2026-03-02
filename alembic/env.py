@@ -1,64 +1,71 @@
 """
-Alembic environment configuration for Invisible Variables Engine.
+Alembic migration environment for Invisible Variables Engine.
 
-This module configures the Alembic migration environment, connecting it to the
-IVE SQLAlchemy metadata so that autogenerate can detect schema changes.
+This module wires Alembic to the IVE SQLAlchemy metadata so that
+``alembic revision --autogenerate`` can detect schema changes.
 
-Supports both synchronous (used by Alembic CLI) and offline modes.
+The Alembic CLI requires a **synchronous** database driver.  Since the
+application uses ``asyncpg``, this env.py rewrites ``DATABASE_URL`` to
+use ``psycopg2`` (the sync driver) before creating the engine.
+
+Supports both offline (SQL script generation) and online (direct apply) modes.
 """
 
 from __future__ import annotations
 
-import asyncio
 import os
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
-from sqlalchemy.ext.asyncio import async_engine_from_config
+from sqlalchemy import create_engine, pool
 
 # ---------------------------------------------------------------------------
-# Import the IVE metadata so Alembic can detect model changes
+# Import the ORM metadata so Alembic can detect model changes.
+# We must import the models module to ensure every model class is registered
+# on Base.metadata before Alembic inspects it.
 # ---------------------------------------------------------------------------
-# TODO: Once the DB models module is implemented, this import provides the
-#       declarative Base.metadata that Alembic uses for autogenerate.
-from ive.db.models import Base  # noqa: E402
+from ive.db.database import Base
+import ive.db.models  # noqa: F401 — registers all model classes on Base.metadata
 
 # ---------------------------------------------------------------------------
-# Alembic Config object (gives access to alembic.ini values)
+# Alembic Config object (provides access to alembic.ini values)
 # ---------------------------------------------------------------------------
 config = context.config
 
-# Interpret the config file for Python logging if present
+# Configure Python logging from alembic.ini
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Override the SQLAlchemy URL from the environment if set
-# This allows Docker/CI environments to inject the connection string at runtime
-_db_url = os.getenv("DATABASE_URL", "").replace(
-    "postgresql+asyncpg", "postgresql"  # Alembic CLI needs sync driver
-)
-if _db_url:
-    config.set_main_option("sqlalchemy.url", _db_url)
+# ---------------------------------------------------------------------------
+# Resolve the sync database URL
+# ---------------------------------------------------------------------------
+# Priority: DATABASE_URL env var (rewritten to sync) > alembic.ini value
+_env_url: str | None = os.getenv("DATABASE_URL")
+if _env_url:
+    # Replace async driver with sync driver for Alembic CLI
+    sync_url = (
+        _env_url
+        .replace("postgresql+asyncpg://", "postgresql+psycopg2://")
+        .replace("postgresql://", "postgresql+psycopg2://", 1)
+    )
+    config.set_main_option("sqlalchemy.url", sync_url)
 
-# Provide the target metadata for autogenerate support
+# Target metadata for autogenerate
 target_metadata = Base.metadata
 
 
 # ---------------------------------------------------------------------------
-# Offline mode
+# Offline mode — emit SQL text without a live database connection
 # ---------------------------------------------------------------------------
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode.
 
-    This configures the context with just a URL and not an Engine,
-    though an Engine is acceptable here as well. By skipping the Engine
-    creation we don't even need a DBAPI to be available.
-
-    Calls to context.execute() here emit the given string to the script output.
+    Emits SQL to stdout (or ``--sql`` file) without connecting to a database.
+    Useful for generating migration scripts in CI where the DB is unavailable.
     """
     url = config.get_main_option("sqlalchemy.url")
+
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -66,6 +73,7 @@ def run_migrations_offline() -> None:
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
         compare_server_default=True,
+        render_as_batch=False,
     )
 
     with context.begin_transaction():
@@ -73,42 +81,35 @@ def run_migrations_offline() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Online mode (synchronous wrapper around async engine)
+# Online mode — apply migrations against a live database
 # ---------------------------------------------------------------------------
 
-def do_run_migrations(connection: object) -> None:
-    """Execute migrations within a synchronous connection context."""
-    context.configure(
-        connection=connection,  # type: ignore[arg-type]
-        target_metadata=target_metadata,
-        compare_type=True,
-        compare_server_default=True,
-    )
-    with context.begin_transaction():
-        context.run_migrations()
+def run_migrations_online() -> None:
+    """Run migrations in 'online' mode with a sync engine.
 
-
-async def run_async_migrations() -> None:
-    """Run migrations using an async engine (required for asyncpg driver)."""
-    # Build a synchronous DSN for Alembic (asyncpg can't be used by Alembic CLI directly)
+    Creates a standard (non-async) ``Engine``, opens a connection, and
+    executes migrations within a transaction.
+    """
     connectable_cfg = config.get_section(config.config_ini_section, {})
     connectable_cfg["sqlalchemy.url"] = config.get_main_option("sqlalchemy.url", "")
 
-    connectable = async_engine_from_config(
-        connectable_cfg,
-        prefix="sqlalchemy.",
+    connectable = create_engine(
+        connectable_cfg["sqlalchemy.url"],
         poolclass=pool.NullPool,
     )
 
-    async with connectable.connect() as connection:
-        await connection.run_sync(do_run_migrations)
+    with connectable.connect() as connection:
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            compare_type=True,
+            compare_server_default=True,
+            render_as_batch=False,
+        )
+        with context.begin_transaction():
+            context.run_migrations()
 
-    await connectable.dispose()
-
-
-def run_migrations_online() -> None:
-    """Run migrations in 'online' mode."""
-    asyncio.run(run_async_migrations())
+    connectable.dispose()
 
 
 # ---------------------------------------------------------------------------

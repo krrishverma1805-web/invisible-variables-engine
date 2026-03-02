@@ -1,93 +1,97 @@
 """
-Dataset Repository.
+Dataset Repository — Invisible Variables Engine.
 
-Data access layer for the Dataset ORM model. Implements the repository
-pattern to decouple business logic from database access details.
+Provides ``DatasetRepository``, which extends
+:class:`~ive.db.repositories.base_repo.BaseRepository` with dataset-specific
+query methods: duplicate detection by checksum, eager-loading of experiments,
+and recency ordering.
 """
 
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Optional
 
-from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
+import structlog
+from sqlalchemy import desc, select
+from sqlalchemy.orm import selectinload
 
 from ive.db.models import Dataset
+from ive.db.repositories.base_repo import BaseRepository
+
+log = structlog.get_logger(__name__)
 
 
-class DatasetRepo:
-    """CRUD operations for Dataset records."""
+class DatasetRepository(BaseRepository[Dataset]):
+    """Dataset-specific query methods on top of :class:`BaseRepository`."""
 
-    def __init__(self, session: AsyncSession) -> None:
-        self.session = session
+    async def get_by_checksum(self, checksum: str) -> Optional[Dataset]:
+        """Fetch a dataset by its SHA-256 file checksum.
 
-    async def get_by_id(self, dataset_id: uuid.UUID) -> Dataset | None:
+        Used to detect duplicate uploads before persisting the file.
+
+        Args:
+            checksum: 64-character hex SHA-256 digest.
+
+        Returns:
+            Existing ``Dataset`` row if found, ``None`` otherwise.
         """
-        Fetch a single dataset by primary key.
-
-        Returns None if not found.
-
-        TODO:
-            - return await self.session.get(Dataset, dataset_id)
-        """
-        return await self.session.get(Dataset, dataset_id)
-
-    async def list(
-        self,
-        offset: int = 0,
-        limit: int = 20,
-        search: str | None = None,
-    ) -> tuple[list[Dataset], int]:
-        """
-        Return paginated datasets with total count.
-
-        TODO:
-            - Build select query with optional ilike filter on name
-            - Execute with offset/limit
-            - Return (items, total)
-        """
-        stmt = select(Dataset).order_by(Dataset.created_at.desc())
-        if search:
-            stmt = stmt.where(Dataset.name.ilike(f"%{search}%"))
-
-        count_stmt = select(func.count()).select_from(stmt.subquery())
-        total = (await self.session.execute(count_stmt)).scalar_one()
-
-        result = await self.session.execute(stmt.offset(offset).limit(limit))
-        items = list(result.scalars().all())
-        return items, total
-
-    async def create(self, data: dict[str, Any]) -> Dataset:
-        """
-        Create and persist a new Dataset record.
-
-        TODO:
-            - dataset = Dataset(**data)
-            - self.session.add(dataset)
-            - await self.session.flush()  # get generated ID
-            - return dataset
-        """
-        dataset = Dataset(**data)
-        self.session.add(dataset)
-        await self.session.flush()
+        result = await self.session.execute(
+            select(Dataset).where(Dataset.checksum == checksum)
+        )
+        dataset = result.scalar_one_or_none()
+        if dataset:
+            log.debug("dataset.duplicate_found", checksum=checksum[:8] + "...", id=str(dataset.id))
         return dataset
 
-    async def update(self, dataset_id: uuid.UUID, data: dict[str, Any]) -> Dataset | None:
-        """Update a dataset record. Returns None if not found."""
-        dataset = await self.get_by_id(dataset_id)
-        if dataset is None:
-            return None
-        for key, value in data.items():
-            setattr(dataset, key, value)
-        await self.session.flush()
-        return dataset
+    async def get_with_experiments(self, dataset_id: uuid.UUID) -> Optional[Dataset]:
+        """Fetch a dataset and eagerly load its ``experiments`` relationship.
 
-    async def delete(self, dataset_id: uuid.UUID) -> bool:
-        """Delete a dataset. Returns True if deleted, False if not found."""
-        dataset = await self.get_by_id(dataset_id)
-        if dataset is None:
-            return False
-        await self.session.delete(dataset)
-        await self.session.flush()
-        return True
+        Using ``selectinload`` avoids the N+1 problem by issuing a single
+        IN-clause query for related experiments.
+
+        Args:
+            dataset_id: UUID of the dataset.
+
+        Returns:
+            ``Dataset`` with ``experiments`` populated, or ``None``.
+        """
+        result = await self.session.execute(
+            select(Dataset)
+            .options(selectinload(Dataset.experiments))
+            .where(Dataset.id == dataset_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_recent(self, limit: int = 10) -> list[Dataset]:
+        """Return the most recently created datasets.
+
+        Args:
+            limit: Maximum number of rows to return (default 10).
+
+        Returns:
+            List of ``Dataset`` rows ordered by ``created_at`` descending.
+        """
+        result = await self.session.execute(
+            select(Dataset).order_by(desc(Dataset.created_at)).limit(limit)
+        )
+        return list(result.scalars().all())
+
+    async def search_by_name(self, query: str, limit: int = 20) -> list[Dataset]:
+        """Case-insensitive ``ILIKE`` search on the ``name`` column.
+
+        Args:
+            query: Free-text search string (SQL wildcards allowed).
+            limit: Maximum rows to return.
+
+        Returns:
+            Matching datasets ordered by name.
+        """
+        pattern = f"%{query}%"
+        result = await self.session.execute(
+            select(Dataset)
+            .where(Dataset.name.ilike(pattern))
+            .order_by(Dataset.name)
+            .limit(limit)
+        )
+        return list(result.scalars().all())

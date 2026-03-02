@@ -1,0 +1,100 @@
+# =============================================================================
+# .dockerignore — Invisible Variables Engine
+# Exclude everything that doesn't need to be in any build context.
+# Smaller context = faster builds and smaller images.
+# =============================================================================
+
+# ─── Git ───
+.git/
+.gitignore
+.github/
+
+# ─── Python artifacts ───
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ─── Virtual environments ───
+.venv/
+venv/
+env/
+ENV/
+
+# ─── Testing ───
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+.hypothesis/
+tests/
+
+# ─── Type checking / linting ───
+.mypy_cache/
+.pytype/
+.pyre/
+.ruff_cache/
+
+# ─── IDE / Editor ───
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+.cursorignore
+.cursorindexingignore
+
+# ─── Documentation (not needed at runtime) ───
+docs/
+*.md
+!README.md
+
+# ─── Docker itself ───
+Dockerfile
+.dockerignore
+docker-compose*.yml
+
+# ─── Environment files (secrets must NEVER be baked into image) ───
+.env
+.env.*
+!.env.example
+
+# ─── Development / local data ───
+data/
+artifacts/
+*.csv
+*.parquet
+*.pkl
+*.joblib
+*.npy
+*.npz
+
+# ─── Scripts (not needed in runtime images) ───
+scripts/
+
+# ─── Logs ───
+*.log
+logs/
+
+# ─── Jupyter ───
+.ipynb_checkpoints/
+*.ipynb
+
+# ─── Node (if any tooling is added) ───
+node_modules/
+npm-debug.log*
+
+# ─── Secrets ───
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
