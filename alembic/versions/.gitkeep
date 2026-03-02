@@ -1,0 +1,3 @@
+# Alembic auto-generated migration files are stored here.
+# Run `make makemigrations MSG="description"` to create a new migration.
+# Run `make migrate` to apply pending migrations.

@@ -1,0 +1,182 @@
+
+# =============================================================================
+# Invisible Variables Engine - Docker Compose
+# Production-grade multi-service setup
+# =============================================================================
+
+x-common-env: &common-env
+  DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-ive}:${POSTGRES_PASSWORD:-ivepassword}@postgres:5432/${POSTGRES_DB:-ive_db}
+  REDIS_URL: redis://redis:6379/0
+  SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
+  ENV: ${ENV:-development}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL Database
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: ive_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ive}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ivepassword}
+      POSTGRES_DB: ${POSTGRES_DB:-ive_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-ive} -d ${POSTGRES_DB:-ive_db}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ive_net
+
+  # ---------------------------------------------------------------------------
+  # Redis (Message Broker + Cache)
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: ive_redis
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD:-redispassword} --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test:
+        ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redispassword}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ive_net
+
+  # ---------------------------------------------------------------------------
+  # FastAPI Application Server
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api
+    container_name: ive_api
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+    env_file:
+      - .env
+    volumes:
+      - ./src:/app/src
+      - artifact_data:/app/artifacts
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - ive_net
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn ive.main:app --host 0.0.0.0 --port 8000 --reload"
+
+  # ---------------------------------------------------------------------------
+  # Celery Worker
+  # ---------------------------------------------------------------------------
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: worker
+    container_name: ive_worker
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      CELERY_CONCURRENCY: ${CELERY_CONCURRENCY:-4}
+    env_file:
+      - .env
+    volumes:
+      - ./src:/app/src
+      - artifact_data:/app/artifacts
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ive_net
+    command: >
+      celery -A ive.workers.celery_app worker
+      --loglevel=${LOG_LEVEL:-info}
+      --concurrency=${CELERY_CONCURRENCY:-4}
+      --queues=default,analysis,high_priority
+
+  # ---------------------------------------------------------------------------
+  # Celery Flower (Monitoring)
+  # ---------------------------------------------------------------------------
+  flower:
+    image: mher/flower:2.0
+    container_name: ive_flower
+    restart: unless-stopped
+    environment:
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-redispassword}@redis:6379/0
+      FLOWER_PORT: 5555
+      FLOWER_BASIC_AUTH: ${FLOWER_USER:-admin}:${FLOWER_PASSWORD:-flowerpass}
+    ports:
+      - "${FLOWER_PORT:-5555}:5555"
+    depends_on:
+      - redis
+    networks:
+      - ive_net
+
+  # ---------------------------------------------------------------------------
+  # Streamlit UI
+  # ---------------------------------------------------------------------------
+  streamlit:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: streamlit
+    container_name: ive_streamlit
+    restart: unless-stopped
+    environment:
+      API_BASE_URL: http://api:8000
+      <<: *common-env
+    env_file:
+      - .env
+    volumes:
+      - ./streamlit_app:/app/streamlit_app
+    ports:
+      - "${STREAMLIT_PORT:-8501}:8501"
+    depends_on:
+      - api
+    networks:
+      - ive_net
+    command: streamlit run /app/streamlit_app/app.py --server.port=8501 --server.address=0.0.0.0
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  artifact_data:
+    driver: local
+
+networks:
+  ive_net:
+    driver: bridge

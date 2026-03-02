@@ -1,0 +1,161 @@
+# pyproject.toml — Invisible Variables Engine
+# Uses PEP 517/518 with Poetry as the build backend.
+
+[tool.poetry]
+name = "invisible-variables-engine"
+version = "0.1.0"
+description = "A data science system that discovers hidden latent variables in datasets by analysing systematic model prediction errors."
+authors = ["Krish Verma <krrish@example.com>"]
+readme = "README.md"
+license = "MIT"
+packages = [{ include = "ive", from = "src" }]
+keywords = ["machine-learning", "latent-variables", "data-science", "explainability"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3.11",
+]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+
+# --- Web framework ---
+fastapi = "^0.111.0"
+uvicorn = { extras = ["standard"], version = "^0.30.0" }
+pydantic = "^2.7.0"
+pydantic-settings = "^2.3.0"
+
+# --- Database ---
+sqlalchemy = { extras = ["asyncio"], version = "^2.0.30" }
+asyncpg = "^0.29.0"
+psycopg2-binary = "^2.9.9"
+alembic = "^1.13.0"
+
+# --- Task queue ---
+celery = { extras = ["redis"], version = "^5.4.0" }
+redis = "^5.0.0"
+kombu = "^5.3.0"
+
+# --- ML / Statistics ---
+scikit-learn = "^1.5.0"
+xgboost = "^2.0.3"
+shap = "^0.45.0"
+hdbscan = "^0.8.38"
+scipy = "^1.13.0"
+statsmodels = "^0.14.2"
+numpy = "^1.26.0"
+pandas = "^2.2.0"
+polars = "^0.20.0"
+
+# --- Observability ---
+structlog = "^24.1.0"
+tenacity = "^8.3.0"
+sentry-sdk = { extras = ["fastapi"], version = "^2.5.0", optional = true }
+
+# --- Auth / Security ---
+python-multipart = "^0.0.9"
+passlib = { extras = ["bcrypt"], version = "^1.7.4" }
+slowapi = "^0.1.9"
+
+# --- Storage ---
+boto3 = { version = "^1.34.0", optional = true }
+
+[tool.poetry.extras]
+s3 = ["boto3"]
+sentry = ["sentry-sdk"]
+all = ["boto3", "sentry-sdk"]
+
+[tool.poetry.group.streamlit.dependencies]
+streamlit = "^1.35.0"
+plotly = "^5.22.0"
+altair = "^5.3.0"
+
+[tool.poetry.group.dev.dependencies]
+# Testing
+pytest = "^8.2.0"
+pytest-asyncio = "^0.23.0"
+pytest-cov = "^5.0.0"
+pytest-xdist = "^3.5.0"
+pytest-mock = "^3.14.0"
+httpx = "^0.27.0"       # async test client for FastAPI
+factory-boy = "^3.3.0"
+faker = "^25.0.0"
+
+# Linting / Formatting
+ruff = "^0.4.0"
+mypy = "^1.10.0"
+types-redis = "^4.6.0"
+types-requests = "^2.31.0"
+
+# Pre-commit
+pre-commit = "^3.7.0"
+
+# Docs
+mkdocs = { version = "^1.6.0", optional = true }
+mkdocs-material = { version = "^9.5.0", optional = true }
+
+[build-system]
+requires = ["poetry-core>=1.9.0"]
+build-backend = "poetry.core.masonry.api"
+
+# =============================================================================
+# Tool configuration
+# =============================================================================
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+    "ANN", # flake8-annotations
+    "S",   # flake8-bandit (security)
+    "N",   # pep8-naming
+]
+ignore = [
+    "ANN101",  # Missing type annotation for self
+    "ANN102",  # Missing type annotation for cls
+    "S101",    # Use of assert (needed in tests)
+    "B008",    # Do not perform function calls in default arguments (FastAPI pattern)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["ANN", "S"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true
+exclude = ["tests/", "scripts/", "alembic/"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-ra -q --strict-markers"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks integration tests",
+    "statistical: marks statistical validation tests",
+    "unit: marks unit tests",
+]
+
+[tool.coverage.run]
+source = ["src/ive"]
+omit = ["*/__init__.py", "*/migrations/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "@abstractmethod",
+]
