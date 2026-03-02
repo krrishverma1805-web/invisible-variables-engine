@@ -124,19 +124,19 @@ curl "$BASE_URL/experiments/<experiment-uuid>/latent-variables" \
 
 ## FAQ
 
-**Q: How large can my dataset be?**  
+**Q: How large can my dataset be?**
 A: IVE supports up to 1 million rows and 500 features. Larger datasets will take longer to process.
 
-**Q: What file formats are supported?**  
+**Q: What file formats are supported?**
 A: CSV and Parquet. For large datasets, Parquet is recommended for faster ingestion.
 
-**Q: What types of tasks are supported?**  
+**Q: What types of tasks are supported?**
 A: Currently regression and binary classification. Multi-class classification is planned.
 
-**Q: How do I interpret a p-value < 0.05 for a latent variable?**  
+**Q: How do I interpret a p-value < 0.05 for a latent variable?**
 A: It means the discovered subgroup pattern is statistically unlikely to have occurred by chance at the 5% significance level. Treat it as a starting point for further investigation, not definitive proof.
 
-**Q: Can I run IVE programmatically in my own pipeline?**  
+**Q: Can I run IVE programmatically in my own pipeline?**
 A: Yes — see the Python SDK section below. You can also import `ive.core.engine.IVEEngine` directly.
 
 ---

@@ -34,10 +34,8 @@ the DB round-trip.
 from __future__ import annotations
 
 import asyncio
-import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-import structlog
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from ive.utils.logging import get_logger
@@ -45,15 +43,16 @@ from ive.utils.logging import get_logger
 log = get_logger(__name__)
 router = APIRouter()
 
-_POLL_INTERVAL = 2.0          # seconds between DB polls
-_KEEPALIVE_INTERVAL = 30.0    # seconds between ping frames
-_MAX_DURATION = 30 * 60.0     # 30 minutes max connection time
+_POLL_INTERVAL = 2.0  # seconds between DB polls
+_KEEPALIVE_INTERVAL = 30.0  # seconds between ping frames
+_MAX_DURATION = 30 * 60.0  # 30 minutes max connection time
 _TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
 
 
 # ---------------------------------------------------------------------------
 # Sync DB helper (runs in a thread via asyncio.to_thread)
 # ---------------------------------------------------------------------------
+
 
 def _fetch_experiment_sync(experiment_id: str) -> dict | None:
     """Fetch minimal experiment status row using a psycopg2 connection.
@@ -72,6 +71,7 @@ def _fetch_experiment_sync(experiment_id: str) -> dict | None:
         import psycopg2
 
         from ive.config import get_settings
+
         settings = get_settings()
         dsn = settings.sync_database_url.replace("postgresql+psycopg2://", "postgresql://")
         conn = psycopg2.connect(dsn, connect_timeout=5)
@@ -116,6 +116,7 @@ def _fetch_celery_progress(task_id: str) -> dict | None:
     """
     try:
         from ive.workers.celery_app import celery_app
+
         result = celery_app.AsyncResult(task_id)
         if result.state == "PROGRESS" and isinstance(result.info, dict):
             return {
@@ -130,6 +131,7 @@ def _fetch_celery_progress(task_id: str) -> dict | None:
 # ---------------------------------------------------------------------------
 # WebSocket endpoint
 # ---------------------------------------------------------------------------
+
 
 @router.websocket("/experiments/{experiment_id}/progress")
 async def experiment_progress(
@@ -165,12 +167,16 @@ async def experiment_progress(
 
             # -- Timeout guard
             if now - start_time > _MAX_DURATION:
-                await _send(websocket, "error", {"message": "WebSocket timeout (30 min). Reconnect to continue monitoring."})
+                await _send(
+                    websocket,
+                    "error",
+                    {"message": "WebSocket timeout (30 min). Reconnect to continue monitoring."},
+                )
                 break
 
             # -- Keepalive ping
             if now - last_keepalive >= _KEEPALIVE_INTERVAL:
-                await _send(websocket, "ping", {"timestamp": datetime.now(timezone.utc).isoformat()})
+                await _send(websocket, "ping", {"timestamp": datetime.now(UTC).isoformat()})
                 last_keepalive = now
 
             # -- Fetch latest DB state
@@ -185,9 +191,7 @@ async def experiment_progress(
 
             # -- Supplement with Celery PROGRESS meta if running
             if current_status == "running" and exp.get("celery_task_id"):
-                celery_meta = await asyncio.to_thread(
-                    _fetch_celery_progress, exp["celery_task_id"]
-                )
+                celery_meta = await asyncio.to_thread(_fetch_celery_progress, exp["celery_task_id"])
                 if celery_meta:
                     celery_progress = celery_meta["progress"]
                     # Take the higher of DB and Celery progress (avoids going backwards)
@@ -243,6 +247,7 @@ async def experiment_progress(
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
+
 
 async def _send(websocket: WebSocket, msg_type: str, data: dict) -> None:
     """Send a typed JSON frame to the WebSocket client.

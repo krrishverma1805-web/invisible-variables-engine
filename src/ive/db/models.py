@@ -24,8 +24,7 @@ Table              Purpose
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
-from typing import Any
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     ARRAY,
@@ -40,21 +39,21 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
-    text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ive.db.database import Base
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _utcnow() -> datetime:
     """Return a timezone-aware UTC timestamp (used as column defaults)."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _uuid() -> uuid.UUID:
@@ -65,6 +64,7 @@ def _uuid() -> uuid.UUID:
 # ---------------------------------------------------------------------------
 # 1. datasets
 # ---------------------------------------------------------------------------
+
 
 class Dataset(Base):
     """Metadata for an uploaded dataset file.
@@ -82,7 +82,9 @@ class Dataset(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), primary_key=True, default=_uuid,
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=_uuid,
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     file_path: Mapped[str] = mapped_column(String(512), nullable=False)
@@ -95,15 +97,22 @@ class Dataset(Base):
     checksum: Mapped[str] = mapped_column(String(64), nullable=False)
     schema_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=_utcnow,
+        DateTime(timezone=True),
+        nullable=False,
+        default=_utcnow,
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow,
+        DateTime(timezone=True),
+        nullable=False,
+        default=_utcnow,
+        onupdate=_utcnow,
     )
 
     # -- Relationships --------------------------------------------------------
-    experiments: Mapped[list["Experiment"]] = relationship(
-        "Experiment", back_populates="dataset", cascade="all, delete-orphan",
+    experiments: Mapped[list[Experiment]] = relationship(
+        "Experiment",
+        back_populates="dataset",
+        cascade="all, delete-orphan",
         passive_deletes=True,
     )
 
@@ -114,6 +123,7 @@ class Dataset(Base):
 # ---------------------------------------------------------------------------
 # 2. experiments
 # ---------------------------------------------------------------------------
+
 
 class Experiment(Base):
     """An IVE analysis run bound to a dataset.
@@ -136,7 +146,9 @@ class Experiment(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), primary_key=True, default=_uuid,
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=_uuid,
     )
     dataset_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -150,35 +162,49 @@ class Experiment(Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     celery_task_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=_utcnow,
+        DateTime(timezone=True),
+        nullable=False,
+        default=_utcnow,
     )
     started_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True,
+        DateTime(timezone=True),
+        nullable=True,
     )
     completed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True,
+        DateTime(timezone=True),
+        nullable=True,
     )
 
     # -- Relationships --------------------------------------------------------
-    dataset: Mapped["Dataset"] = relationship("Dataset", back_populates="experiments")
-    trained_models: Mapped[list["TrainedModel"]] = relationship(
-        "TrainedModel", back_populates="experiment", cascade="all, delete-orphan",
+    dataset: Mapped[Dataset] = relationship("Dataset", back_populates="experiments")
+    trained_models: Mapped[list[TrainedModel]] = relationship(
+        "TrainedModel",
+        back_populates="experiment",
+        cascade="all, delete-orphan",
         passive_deletes=True,
     )
-    residuals: Mapped[list["Residual"]] = relationship(
-        "Residual", back_populates="experiment", cascade="all, delete-orphan",
+    residuals: Mapped[list[Residual]] = relationship(
+        "Residual",
+        back_populates="experiment",
+        cascade="all, delete-orphan",
         passive_deletes=True,
     )
-    error_patterns: Mapped[list["ErrorPattern"]] = relationship(
-        "ErrorPattern", back_populates="experiment", cascade="all, delete-orphan",
+    error_patterns: Mapped[list[ErrorPattern]] = relationship(
+        "ErrorPattern",
+        back_populates="experiment",
+        cascade="all, delete-orphan",
         passive_deletes=True,
     )
-    latent_variables: Mapped[list["LatentVariable"]] = relationship(
-        "LatentVariable", back_populates="experiment", cascade="all, delete-orphan",
+    latent_variables: Mapped[list[LatentVariable]] = relationship(
+        "LatentVariable",
+        back_populates="experiment",
+        cascade="all, delete-orphan",
         passive_deletes=True,
     )
-    events: Mapped[list["ExperimentEvent"]] = relationship(
-        "ExperimentEvent", back_populates="experiment", cascade="all, delete-orphan",
+    events: Mapped[list[ExperimentEvent]] = relationship(
+        "ExperimentEvent",
+        back_populates="experiment",
+        cascade="all, delete-orphan",
         passive_deletes=True,
     )
 
@@ -190,6 +216,7 @@ class Experiment(Base):
 # 3. models (trained ML models)
 # ---------------------------------------------------------------------------
 
+
 class TrainedModel(Base):
     """A single trained model for one fold of one model type in an experiment."""
 
@@ -197,13 +224,17 @@ class TrainedModel(Base):
     __table_args__ = (
         Index("idx_models_experiment_id", "experiment_id"),
         UniqueConstraint(
-            "experiment_id", "model_type", "fold_number",
+            "experiment_id",
+            "model_type",
+            "fold_number",
             name="uq_models_exp_type_fold",
         ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), primary_key=True, default=_uuid,
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=_uuid,
     )
     experiment_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -215,19 +246,24 @@ class TrainedModel(Base):
     train_metric: Mapped[float] = mapped_column(Float, nullable=False)
     val_metric: Mapped[float] = mapped_column(Float, nullable=False)
     metric_name: Mapped[str] = mapped_column(
-        String(50), nullable=False, default="rmse",
+        String(50),
+        nullable=False,
+        default="rmse",
     )
     artifact_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     hyperparams: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     feature_importances: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     training_time_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=_utcnow,
+        DateTime(timezone=True),
+        nullable=False,
+        default=_utcnow,
     )
 
     # -- Relationships --------------------------------------------------------
-    experiment: Mapped["Experiment"] = relationship(
-        "Experiment", back_populates="trained_models",
+    experiment: Mapped[Experiment] = relationship(
+        "Experiment",
+        back_populates="trained_models",
     )
 
     def __repr__(self) -> str:
@@ -240,6 +276,7 @@ class TrainedModel(Base):
 # ---------------------------------------------------------------------------
 # 4. residuals
 # ---------------------------------------------------------------------------
+
 
 class Residual(Base):
     """Per-sample, per-fold out-of-fold residual for an experiment.
@@ -256,7 +293,9 @@ class Residual(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), primary_key=True, default=_uuid,
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=_uuid,
     )
     experiment_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -272,12 +311,15 @@ class Residual(Base):
     abs_residual: Mapped[float] = mapped_column(Float, nullable=False)
     feature_vector: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=_utcnow,
+        DateTime(timezone=True),
+        nullable=False,
+        default=_utcnow,
     )
 
     # -- Relationships --------------------------------------------------------
-    experiment: Mapped["Experiment"] = relationship(
-        "Experiment", back_populates="residuals",
+    experiment: Mapped[Experiment] = relationship(
+        "Experiment",
+        back_populates="residuals",
     )
 
     def __repr__(self) -> str:
@@ -290,6 +332,7 @@ class Residual(Base):
 # ---------------------------------------------------------------------------
 # 5. error_patterns
 # ---------------------------------------------------------------------------
+
 
 class ErrorPattern(Base):
     """A statistically significant pattern discovered in the residuals.
@@ -310,7 +353,9 @@ class ErrorPattern(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), primary_key=True, default=_uuid,
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=_uuid,
     )
     experiment_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -328,12 +373,15 @@ class ErrorPattern(Base):
     std_residual: Mapped[float] = mapped_column(Float, nullable=False)
     evidence: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=_utcnow,
+        DateTime(timezone=True),
+        nullable=False,
+        default=_utcnow,
     )
 
     # -- Relationships --------------------------------------------------------
-    experiment: Mapped["Experiment"] = relationship(
-        "Experiment", back_populates="error_patterns",
+    experiment: Mapped[Experiment] = relationship(
+        "Experiment",
+        back_populates="error_patterns",
     )
 
     def __repr__(self) -> str:
@@ -346,6 +394,7 @@ class ErrorPattern(Base):
 # ---------------------------------------------------------------------------
 # 6. latent_variables
 # ---------------------------------------------------------------------------
+
 
 class LatentVariable(Base):
     """A constructed and (optionally validated) latent variable.
@@ -372,7 +421,9 @@ class LatentVariable(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), primary_key=True, default=_uuid,
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=_uuid,
     )
     experiment_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -383,7 +434,9 @@ class LatentVariable(Base):
     description: Mapped[str] = mapped_column(Text, nullable=False)
     construction_rule: Mapped[dict] = mapped_column(JSONB, nullable=False)
     source_pattern_ids: Mapped[list[uuid.UUID]] = mapped_column(
-        ARRAY(PG_UUID(as_uuid=True)), nullable=False, default=list,
+        ARRAY(PG_UUID(as_uuid=True)),
+        nullable=False,
+        default=list,
     )
     importance_score: Mapped[float] = mapped_column(Float, nullable=False)
     stability_score: Mapped[float] = mapped_column(Float, nullable=False)
@@ -393,15 +446,20 @@ class LatentVariable(Base):
     confidence_interval_upper: Mapped[float | None] = mapped_column(Float, nullable=True)
     explanation_text: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="candidate",
+        String(20),
+        nullable=False,
+        default="candidate",
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=_utcnow,
+        DateTime(timezone=True),
+        nullable=False,
+        default=_utcnow,
     )
 
     # -- Relationships --------------------------------------------------------
-    experiment: Mapped["Experiment"] = relationship(
-        "Experiment", back_populates="latent_variables",
+    experiment: Mapped[Experiment] = relationship(
+        "Experiment",
+        back_populates="latent_variables",
     )
 
     def __repr__(self) -> str:
@@ -412,6 +470,7 @@ class LatentVariable(Base):
 # 7. api_keys
 # ---------------------------------------------------------------------------
 
+
 class APIKey(Base):
     """Hashed API key used for request authentication.
 
@@ -421,29 +480,34 @@ class APIKey(Base):
     """
 
     __tablename__ = "api_keys"
-    __table_args__ = (
-        Index("idx_api_keys_active", "is_active"),
-    )
+    __table_args__ = (Index("idx_api_keys_active", "is_active"),)
 
     id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), primary_key=True, default=_uuid,
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=_uuid,
     )
     key_hash: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     permissions: Mapped[dict] = mapped_column(
-        JSONB, nullable=False,
+        JSONB,
+        nullable=False,
         default=lambda: {"read": True, "write": True, "admin": False},
     )
     rate_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=_utcnow,
+        DateTime(timezone=True),
+        nullable=False,
+        default=_utcnow,
     )
     expires_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True,
+        DateTime(timezone=True),
+        nullable=True,
     )
     last_used_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True,
+        DateTime(timezone=True),
+        nullable=True,
     )
 
     def __repr__(self) -> str:
@@ -453,6 +517,7 @@ class APIKey(Base):
 # ---------------------------------------------------------------------------
 # 8. experiment_events (audit log)
 # ---------------------------------------------------------------------------
+
 
 class ExperimentEvent(Base):
     """Append-only audit log for experiment lifecycle events.
@@ -469,7 +534,9 @@ class ExperimentEvent(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), primary_key=True, default=_uuid,
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=_uuid,
     )
     experiment_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -480,12 +547,15 @@ class ExperimentEvent(Base):
     event_type: Mapped[str] = mapped_column(String(100), nullable=False)
     payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=_utcnow,
+        DateTime(timezone=True),
+        nullable=False,
+        default=_utcnow,
     )
 
     # -- Relationships --------------------------------------------------------
-    experiment: Mapped["Experiment"] = relationship(
-        "Experiment", back_populates="events",
+    experiment: Mapped[Experiment] = relationship(
+        "Experiment",
+        back_populates="events",
     )
 
     def __repr__(self) -> str:

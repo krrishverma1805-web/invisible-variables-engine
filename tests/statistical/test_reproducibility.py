@@ -49,9 +49,10 @@ def test_bootstrap_stability_score_is_reproducible() -> None:
         - Call BootstrapValidator(seed=42).validate(...) twice
         - Assert stability_score is identical
     """
+    import numpy as np
+
     from ive.construction.bootstrap_validator import BootstrapValidator
     from ive.core.pipeline import LatentVariableCandidate
-    import numpy as np
 
     candidate = LatentVariableCandidate(rank=1, name="Test", effect_size=0.5)
     X = np.random.default_rng(42).normal(0, 1, (100, 3))

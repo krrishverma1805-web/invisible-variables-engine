@@ -15,27 +15,27 @@ for file in .gsd/templates/*.md; do
     ((templates_checked++))
     filename=$(basename "$file")
     has_errors=false
-    
+
     # Check for title (# heading)
     if ! head -1 "$file" | grep -q "^# "; then
         echo "❌ $filename: Missing title (# heading)"
         ((error_count++))
         has_errors=true
     fi
-    
+
     # Check for Last updated marker
     if ! grep -q "Last updated" "$file"; then
         echo "⚠️  $filename: Missing 'Last updated' marker"
         ((warning_count++))
     fi
-    
+
     # Check minimum length
     file_size=$(wc -c < "$file")
     if [ "$file_size" -lt 200 ]; then
         echo "⚠️  $filename: Very short template (<200 chars)"
         ((warning_count++))
     fi
-    
+
     if [ "$has_errors" = false ]; then
         echo "✅ $filename"
     fi

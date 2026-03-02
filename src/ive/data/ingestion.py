@@ -32,10 +32,8 @@ import io
 import re
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any
 
-import numpy as np
 import pandas as pd
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -52,7 +50,7 @@ logger = get_logger(__name__)
 # ---------------------------------------------------------------------------
 _MIN_ROWS = 100
 _MIN_FEATURE_COLS = 2
-_MAX_FILE_BYTES = 500 * 1024 * 1024   # 500 MB
+_MAX_FILE_BYTES = 500 * 1024 * 1024  # 500 MB
 _LARGE_FILE_THRESHOLD = 50 * 1024 * 1024  # 50 MB — switch to Polars
 _HIGH_NULL_PCT = 95.0
 _SNIFF_BYTES = 10_240
@@ -72,6 +70,7 @@ _MAX_CLASSIFICATION_UNIQUE = 20
 # Custom exception
 # ---------------------------------------------------------------------------
 
+
 class DatasetValidationError(Exception):
     """Raised when a dataset fails one or more validation rules.
 
@@ -88,13 +87,14 @@ class DatasetValidationError(Exception):
 # Result dataclasses
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True, slots=True)
 class ColumnTypeInfo:
     """Type-detection result for a single column."""
 
     name: str
-    detected_type: str       # "numeric" | "categorical" | "datetime" | "boolean" | "text" | "id"
-    dtype: str               # original pandas dtype string
+    detected_type: str  # "numeric" | "categorical" | "datetime" | "boolean" | "text" | "id"
+    dtype: str  # original pandas dtype string
     null_count: int
     null_pct: float
     unique_count: int
@@ -118,9 +118,9 @@ class ColumnTypeInfo:
 class IngestionResult:
     """Structured result returned by :meth:`DataIngestionService.ingest`."""
 
-    dataset_id: str           # UUID as string
-    file_path: str            # artefact store path
-    checksum: str             # SHA-256 hex digest
+    dataset_id: str  # UUID as string
+    file_path: str  # artefact store path
+    checksum: str  # SHA-256 hex digest
     row_count: int
     col_count: int
     target_column: str
@@ -138,6 +138,7 @@ class IngestionResult:
 # ---------------------------------------------------------------------------
 # Service
 # ---------------------------------------------------------------------------
+
 
 class DataIngestionService:
     """Stateless service orchestrating the full CSV → DB ingestion pipeline.
@@ -289,8 +290,7 @@ class DataIngestionService:
 
         if text is None:
             raise DatasetValidationError(
-                ["Could not decode file with any supported encoding "
-                 f"({', '.join(_ENCODINGS)})."]
+                ["Could not decode file with any supported encoding " f"({', '.join(_ENCODINGS)})."]
             )
 
         # Strip UTF-8 BOM if present
@@ -345,13 +345,9 @@ class DataIngestionService:
                 skip_blank_lines=True,
             )
         except Exception as exc:
-            raise DatasetValidationError(
-                [f"Failed to parse CSV with Pandas: {exc}"]
-            ) from exc
+            raise DatasetValidationError([f"Failed to parse CSV with Pandas: {exc}"]) from exc
 
-    def _parse_with_polars(
-        self, raw: bytes, delimiter: str, encoding: str
-    ) -> pd.DataFrame:
+    def _parse_with_polars(self, raw: bytes, delimiter: str, encoding: str) -> pd.DataFrame:
         """Parse large CSV using Polars and convert to Pandas."""
         try:
             import polars as pl
@@ -369,9 +365,7 @@ class DataIngestionService:
             text = raw.decode(encoding, errors="replace")
             return self._parse_with_pandas(text, delimiter)
         except Exception as exc:
-            raise DatasetValidationError(
-                [f"Failed to parse CSV with Polars: {exc}"]
-            ) from exc
+            raise DatasetValidationError([f"Failed to parse CSV with Polars: {exc}"]) from exc
 
     # ------------------------------------------------------------------
     # Step 2: Column Type Detection
@@ -431,8 +425,10 @@ class DataIngestionService:
 
         self.logger.debug(
             "ingestion.types_summary",
-            types={ct.detected_type: sum(1 for c in results if c.detected_type == ct.detected_type)
-                   for ct in results},
+            types={
+                ct.detected_type: sum(1 for c in results if c.detected_type == ct.detected_type)
+                for ct in results
+            },
         )
         return results
 
@@ -521,9 +517,7 @@ class DataIngestionService:
 
         # ── Row count ────────────────────────────────────────────────
         if len(df) < _MIN_ROWS:
-            errors.append(
-                f"Dataset has {len(df)} rows — minimum is {_MIN_ROWS}."
-            )
+            errors.append(f"Dataset has {len(df)} rows — minimum is {_MIN_ROWS}.")
 
         # ── Feature column count (excluding target) ──────────────────
         feature_cols = [c for c in df.columns if c != target_column]
@@ -561,9 +555,7 @@ class DataIngestionService:
                             f"Time column '{time_column}' could not be parsed as datetime."
                         )
                 except Exception:
-                    errors.append(
-                        f"Time column '{time_column}' is not parseable as datetime."
-                    )
+                    errors.append(f"Time column '{time_column}' is not parseable as datetime.")
 
         # ── Duplicate column names ───────────────────────────────────
         dup_cols = [c for c in df.columns[df.columns.duplicated()]]
@@ -678,9 +670,7 @@ class DataIngestionService:
         target_stats: dict[str, Any] = {}
         if target_column in df.columns:
             target = df[target_column].dropna()
-            target_col_info = next(
-                (c for c in columns if c.name == target_column), None
-            )
+            target_col_info = next((c for c in columns if c.name == target_column), None)
             target_type = target_col_info.detected_type if target_col_info else "numeric"
 
             if pd.api.types.is_numeric_dtype(target):

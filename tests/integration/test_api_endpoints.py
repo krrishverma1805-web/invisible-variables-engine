@@ -53,7 +53,9 @@ class TestDatasetEndpoints:
         data = resp.json()
         assert "items" in data
 
-    def test_get_nonexistent_dataset_returns_404(self, api_client: TestClient, authed_headers) -> None:
+    def test_get_nonexistent_dataset_returns_404(
+        self, api_client: TestClient, authed_headers
+    ) -> None:
         """GET /api/v1/datasets/{nonexistent_id} should return 404."""
         resp = api_client.get(
             "/api/v1/datasets/00000000-0000-0000-0000-000000000000",

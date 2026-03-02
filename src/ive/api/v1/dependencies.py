@@ -12,7 +12,7 @@ Provides:
 
 from __future__ import annotations
 
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 from fastapi import Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +30,7 @@ log = get_logger(__name__)
 # ---------------------------------------------------------------------------
 # Database session
 # ---------------------------------------------------------------------------
+
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """Yield an ``AsyncSession`` bound to the current request.
@@ -55,6 +56,7 @@ get_db_session = get_db
 # API Key
 # ---------------------------------------------------------------------------
 
+
 async def get_current_api_key(request: Request) -> str:
     """Extract the validated API key from the request.
 
@@ -75,6 +77,7 @@ async def get_current_api_key(request: Request) -> str:
     api_key = getattr(request.state, "api_key", None)
     if not api_key:
         from fastapi import HTTPException, status
+
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="API key not found in request state.",
@@ -85,6 +88,7 @@ async def get_current_api_key(request: Request) -> str:
 # ---------------------------------------------------------------------------
 # Pagination
 # ---------------------------------------------------------------------------
+
 
 def get_pagination(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
@@ -107,6 +111,7 @@ def get_pagination(
 # ---------------------------------------------------------------------------
 # Repository shortcuts
 # ---------------------------------------------------------------------------
+
 
 def get_dataset_repo(
     session: AsyncSession = Depends(get_db),

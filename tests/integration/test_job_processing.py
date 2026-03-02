@@ -16,6 +16,7 @@ import pytest
 def celery_eager_mode(settings):
     """Run Celery tasks synchronously (eager) during tests."""
     from ive.workers.celery_app import celery_app
+
     celery_app.conf.update(task_always_eager=True, task_eager_propagates=True)
     yield
     celery_app.conf.update(task_always_eager=False)

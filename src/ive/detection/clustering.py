@@ -25,11 +25,11 @@ log = structlog.get_logger(__name__)
 class ClusteringResult:
     """Output of HDBSCAN clustering."""
 
-    labels: np.ndarray               # -1 = noise, 0..k = cluster id
+    labels: np.ndarray  # -1 = noise, 0..k = cluster id
     n_clusters: int = 0
     noise_fraction: float = 0.0
     cluster_stats: dict[int, dict[str, float]] = field(default_factory=dict)
-    validity_score: float = 0.0      # DBCV score (-1 to 1)
+    validity_score: float = 0.0  # DBCV score (-1 to 1)
 
 
 class HDBSCANClusterer:
@@ -123,7 +123,7 @@ class HDBSCANClusterer:
         noise_fraction = float(np.mean(labels == -1))
 
         cluster_stats: dict[int, dict[str, float]] = {}
-        for cid, count in zip(unique, counts):
+        for cid, count in zip(unique, counts, strict=False):
             mask = labels == cid
             cluster_stats[int(cid)] = {
                 "size": int(count),

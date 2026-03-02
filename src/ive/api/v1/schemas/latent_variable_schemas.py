@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 
 class LatentVariableSummary(BaseModel):
@@ -21,7 +21,7 @@ class LatentVariableSummary(BaseModel):
     id: UUID
     experiment_id: UUID
     name: str
-    status: str          # "candidate" | "validated" | "rejected"
+    status: str  # "candidate" | "validated" | "rejected"
     importance_score: float
     stability_score: float
     bootstrap_presence_rate: float

@@ -57,38 +57,38 @@ else {
     Write-Host "📦 Installation Options" -ForegroundColor White
     Write-Host "───────────────────────────────────────────────────────" -ForegroundColor Gray
     Write-Host ""
-    
+
     # Check for package managers
     $hasWinget = Get-Command winget -ErrorAction SilentlyContinue
     $hasChoco = Get-Command choco -ErrorAction SilentlyContinue
     $hasScoop = Get-Command scoop -ErrorAction SilentlyContinue
-    
+
     if ($hasWinget) {
         Write-Host "Using winget:" -ForegroundColor Cyan
         Write-Host "  winget install BurntSushi.ripgrep.MSVC"
         Write-Host "  winget install sharkdp.fd"
         Write-Host ""
     }
-    
+
     if ($hasChoco) {
         Write-Host "Using Chocolatey:" -ForegroundColor Cyan
         Write-Host "  choco install ripgrep fd"
         Write-Host ""
     }
-    
+
     if ($hasScoop) {
         Write-Host "Using Scoop:" -ForegroundColor Cyan
         Write-Host "  scoop install ripgrep fd"
         Write-Host ""
     }
-    
+
     if (-not ($hasWinget -or $hasChoco -or $hasScoop)) {
         Write-Host "Download binaries from:" -ForegroundColor Cyan
         Write-Host "  ripgrep: https://github.com/BurntSushi/ripgrep/releases"
         Write-Host "  fd: https://github.com/sharkdp/fd/releases"
         Write-Host ""
     }
-    
+
     Write-Host "───────────────────────────────────────────────────────" -ForegroundColor Gray
     Write-Host ""
     Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan

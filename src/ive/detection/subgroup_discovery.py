@@ -13,7 +13,7 @@ A high WRAcc means the rule targets a large, highly-deviant subgroup.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 import structlog
@@ -25,14 +25,14 @@ log = structlog.get_logger(__name__)
 class SubgroupPattern:
     """A discovered subgroup pattern with its quality metrics."""
 
-    rule: str                        # Human-readable rule e.g. "age > 50 AND city == 'NYC'"
-    conditions: list[dict]           # Machine-readable condition list
-    coverage: float = 0.0           # Fraction of dataset matching the rule
-    wracc: float = 0.0             # WRAcc quality metric
-    mean_residual: float = 0.0      # Mean residual within the subgroup
+    rule: str  # Human-readable rule e.g. "age > 50 AND city == 'NYC'"
+    conditions: list[dict]  # Machine-readable condition list
+    coverage: float = 0.0  # Fraction of dataset matching the rule
+    wracc: float = 0.0  # WRAcc quality metric
+    mean_residual: float = 0.0  # Mean residual within the subgroup
     mean_residual_outside: float = 0.0
-    effect_size: float = 0.0        # Cohen's d vs. complement
-    sample_mask: np.ndarray | None = None   # Boolean mask for matched samples
+    effect_size: float = 0.0  # Cohen's d vs. complement
+    sample_mask: np.ndarray | None = None  # Boolean mask for matched samples
 
 
 class SubgroupDiscoverer:
@@ -64,7 +64,7 @@ class SubgroupDiscoverer:
 
     def discover(
         self,
-        df: object,          # pd.DataFrame
+        df: object,  # pd.DataFrame
         residuals: np.ndarray,
         feature_columns: list[str],
         top_k: int = 20,

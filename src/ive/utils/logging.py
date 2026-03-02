@@ -4,6 +4,7 @@ Uses structlog with stdlib logging backend.
 """
 
 import logging
+
 import structlog
 
 
@@ -39,10 +40,10 @@ def setup_logging(log_level: str = "INFO", json_format: bool = False) -> None:
     )
 
 
-
 def get_logger(name: str):
     """Return a structured logger."""
     return structlog.get_logger(name)
+
 
 def bind_context(**kwargs):
     """Bind context variables to the current request."""

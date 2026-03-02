@@ -13,7 +13,7 @@ Analyses:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 import structlog
@@ -25,8 +25,8 @@ log = structlog.get_logger(__name__)
 class TemporalPattern:
     """A detected temporal pattern in the residuals."""
 
-    column: str                        # The datetime column used for analysis
-    pattern_type: str                  # 'trend' | 'seasonality' | 'regime_shift'
+    column: str  # The datetime column used for analysis
+    pattern_type: str  # 'trend' | 'seasonality' | 'regime_shift'
     description: str = ""
     affected_period: str = ""
     effect_size: float = 0.0
@@ -46,7 +46,7 @@ class TemporalAnalyzer:
 
     def analyze(
         self,
-        df: object,                    # pd.DataFrame
+        df: object,  # pd.DataFrame
         residuals: np.ndarray,
         datetime_columns: list[str],
     ) -> list[TemporalPattern]:

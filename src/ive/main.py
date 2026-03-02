@@ -12,13 +12,12 @@ from __future__ import annotations
 
 import time
 import uuid
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
-import structlog
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import RedirectResponse
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import Response
 
@@ -31,7 +30,6 @@ from ive.config import get_settings
 from ive.db.database import close_db, init_db
 from ive.utils.logging import (
     bind_context,
-    clear_context,
     get_logger,
     log_request,
     setup_logging,
@@ -44,6 +42,7 @@ log = get_logger(__name__)
 # Request ID Middleware
 # ---------------------------------------------------------------------------
 
+
 class RequestIDMiddleware(BaseHTTPMiddleware):
     """Inject a unique ``X-Request-ID`` header into every request/response.
 
@@ -54,9 +53,7 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
     structlog context so every log emitted during the request includes it.
     """
 
-    async def dispatch(
-        self, request: Request, call_next: RequestResponseEndpoint
-    ) -> Response:
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
         request.state.request_id = request_id
         bind_context(request_id=request_id)
@@ -70,12 +67,11 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
 # Request Logging Middleware
 # ---------------------------------------------------------------------------
 
+
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     """Log every HTTP request with method, path, status, and duration."""
 
-    async def dispatch(
-        self, request: Request, call_next: RequestResponseEndpoint
-    ) -> Response:
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         start = time.perf_counter()
         response = await call_next(request)
         duration_ms = (time.perf_counter() - start) * 1000
@@ -98,6 +94,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 # Lifespan (startup + shutdown events)
 # ---------------------------------------------------------------------------
 
+
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     """Manage application startup and shutdown."""
@@ -119,6 +116,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     if settings.sentry_dsn:
         try:
             import sentry_sdk
+
             sentry_sdk.init(
                 dsn=settings.sentry_dsn,
                 environment=settings.env.value,
@@ -149,6 +147,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
 # Application factory
 # ---------------------------------------------------------------------------
 
+
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application.
 
@@ -174,10 +173,7 @@ def create_app() -> FastAPI:
     # ── 1. CORS (outermost — first added) ──────────────────────────────────
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=(
-            ["*"] if settings.is_development
-            else ["https://ive.example.com"]
-        ),
+        allow_origins=(["*"] if settings.is_development else ["https://ive.example.com"]),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

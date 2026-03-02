@@ -200,7 +200,7 @@ Run anti-pattern detection on modified files:
 Select-String -Path "src/**/*.ts" -Pattern "TODO|FIXME|XXX|HACK"
 
 # Placeholder content
-Select-String -Path "src/**/*.tsx" -Pattern "placeholder|coming soon" 
+Select-String -Path "src/**/*.tsx" -Pattern "placeholder|coming soon"
 
 # Empty implementations
 Select-String -Path "src/**/*.ts" -Pattern "return null|return \{\}|return \[\]"
@@ -297,7 +297,7 @@ gaps:
 Select-String -Pattern "TODO|FIXME|XXX|HACK|PLACEHOLDER"
 
 # Placeholder text
-Select-String -Pattern "placeholder|lorem ipsum|coming soon" 
+Select-String -Pattern "placeholder|lorem ipsum|coming soon"
 
 # Empty implementations
 Select-String -Pattern "return null|return undefined|return \{\}|return \[\]"

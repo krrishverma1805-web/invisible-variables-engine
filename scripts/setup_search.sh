@@ -43,7 +43,7 @@ suggest_install() {
     echo "📦 Installation Options"
     echo "───────────────────────────────────────────────────────"
     echo ""
-    
+
     # Detect OS
     if [[ "$OSTYPE" == "darwin"* ]]; then
         echo "macOS detected. Install with Homebrew:"
@@ -63,7 +63,7 @@ suggest_install() {
         echo "  ripgrep: https://github.com/BurntSushi/ripgrep"
         echo "  fd: https://github.com/sharkdp/fd"
     fi
-    
+
     echo ""
     echo "───────────────────────────────────────────────────────"
 }
@@ -92,9 +92,9 @@ else
     echo ""
     echo "GSD will work fine with built-in grep, but ripgrep and fd"
     echo "provide faster searching in large codebases."
-    
+
     suggest_install
-    
+
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo " GSD ► Using grep as fallback (works fine!)"

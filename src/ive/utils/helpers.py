@@ -7,8 +7,9 @@ from __future__ import annotations
 import hashlib
 import time
 import uuid
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Any, Generator
+from typing import Any
 
 
 def generate_uuid() -> uuid.UUID:
@@ -82,7 +83,7 @@ def chunk_list(items: list[Any], chunk_size: int) -> list[list[Any]]:
     Returns:
         List of sub-lists.
     """
-    return [items[i: i + chunk_size] for i in range(0, len(items), chunk_size)]
+    return [items[i : i + chunk_size] for i in range(0, len(items), chunk_size)]
 
 
 def safe_divide(numerator: float, denominator: float, default: float = 0.0) -> float:

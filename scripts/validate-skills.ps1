@@ -16,37 +16,37 @@ foreach ($skill in $skills) {
     $SkillsChecked++
     $skillFile = Join-Path $skill.FullName "SKILL.md"
     $hasErrors = $false
-    
+
     # Check SKILL.md exists
     if (-not (Test-Path $skillFile)) {
         Write-Host "❌ $($skill.Name): Missing SKILL.md" -ForegroundColor Red
         $ErrorCount++
         continue
     }
-    
+
     $content = Get-Content $skillFile -Raw
-    
+
     # Check for frontmatter
     if ($content -notmatch "^---") {
         Write-Host "❌ $($skill.Name): Missing frontmatter" -ForegroundColor Red
         $ErrorCount++
         $hasErrors = $true
     }
-    
+
     # Check for name field
     if ($content -notmatch "name:") {
         Write-Host "❌ $($skill.Name): Missing name in frontmatter" -ForegroundColor Red
         $ErrorCount++
         $hasErrors = $true
     }
-    
+
     # Check for description field
     if ($content -notmatch "description:") {
         Write-Host "❌ $($skill.Name): Missing description in frontmatter" -ForegroundColor Red
         $ErrorCount++
         $hasErrors = $true
     }
-    
+
     if (-not $hasErrors) {
         Write-Host "✅ $($skill.Name)" -ForegroundColor Green
     }

@@ -17,6 +17,7 @@ import numpy as np
 
 if TYPE_CHECKING:
     import pandas as pd
+
     from ive.api.v1.schemas.experiment_schemas import ExperimentConfig
 
 
@@ -77,14 +78,14 @@ class PipelineContext:
     """
 
     experiment_id: uuid.UUID
-    config: "ExperimentConfig"
+    config: ExperimentConfig
     data_path: str
 
     # Populated by Phase 1 — Understand
-    df: "pd.DataFrame | None" = None
+    df: pd.DataFrame | None = None
     column_types: dict[str, str] = field(default_factory=dict)
     profile: dict[str, Any] = field(default_factory=dict)
-    target_series: "pd.Series | None" = None
+    target_series: pd.Series | None = None
     feature_columns: list[str] = field(default_factory=list)
 
     # Populated by Phase 2 — Model

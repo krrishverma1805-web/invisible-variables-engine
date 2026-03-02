@@ -19,13 +19,14 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import create_engine, pool
 
+import ive.db.models  # noqa: F401 — registers all model classes on Base.metadata
+
 # ---------------------------------------------------------------------------
 # Import the ORM metadata so Alembic can detect model changes.
 # We must import the models module to ensure every model class is registered
 # on Base.metadata before Alembic inspects it.
 # ---------------------------------------------------------------------------
 from ive.db.database import Base
-import ive.db.models  # noqa: F401 — registers all model classes on Base.metadata
 
 # ---------------------------------------------------------------------------
 # Alembic Config object (provides access to alembic.ini values)
@@ -43,10 +44,8 @@ if config.config_file_name is not None:
 _env_url: str | None = os.getenv("DATABASE_URL")
 if _env_url:
     # Replace async driver with sync driver for Alembic CLI
-    sync_url = (
-        _env_url
-        .replace("postgresql+asyncpg://", "postgresql+psycopg2://")
-        .replace("postgresql://", "postgresql+psycopg2://", 1)
+    sync_url = _env_url.replace("postgresql+asyncpg://", "postgresql+psycopg2://").replace(
+        "postgresql://", "postgresql+psycopg2://", 1
     )
     config.set_main_option("sqlalchemy.url", sync_url)
 
@@ -57,6 +56,7 @@ target_metadata = Base.metadata
 # ---------------------------------------------------------------------------
 # Offline mode — emit SQL text without a live database connection
 # ---------------------------------------------------------------------------
+
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode.
@@ -83,6 +83,7 @@ def run_migrations_offline() -> None:
 # ---------------------------------------------------------------------------
 # Online mode — apply migrations against a live database
 # ---------------------------------------------------------------------------
+
 
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode with a sync engine.

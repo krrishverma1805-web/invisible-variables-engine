@@ -14,8 +14,8 @@ statement that could exceed server-side limits.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 import structlog
 from sqlalchemy import desc, insert, select
@@ -32,7 +32,7 @@ _RESIDUAL_CHUNK_SIZE = 500
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class ExperimentRepository(BaseRepository[Experiment]):
@@ -67,6 +67,7 @@ class ExperimentRepository(BaseRepository[Experiment]):
         instance = await self.update(experiment_id, **kwargs)
         if instance is None:
             from sqlalchemy.exc import NoResultFound
+
             raise NoResultFound(f"Experiment {experiment_id} not found")
         log.info("experiment.status_updated", id=str(experiment_id), status=status)
         return instance
@@ -94,6 +95,7 @@ class ExperimentRepository(BaseRepository[Experiment]):
         )
         if instance is None:
             from sqlalchemy.exc import NoResultFound
+
             raise NoResultFound(f"Experiment {experiment_id} not found")
         return instance
 
@@ -115,6 +117,7 @@ class ExperimentRepository(BaseRepository[Experiment]):
         )
         if instance is None:
             from sqlalchemy.exc import NoResultFound
+
             raise NoResultFound(f"Experiment {experiment_id} not found")
         log.info("experiment.started", id=str(experiment_id))
         return instance
@@ -137,13 +140,12 @@ class ExperimentRepository(BaseRepository[Experiment]):
         )
         if instance is None:
             from sqlalchemy.exc import NoResultFound
+
             raise NoResultFound(f"Experiment {experiment_id} not found")
         log.info("experiment.completed", id=str(experiment_id))
         return instance
 
-    async def mark_failed(
-        self, experiment_id: uuid.UUID, error_message: str
-    ) -> Experiment:
+    async def mark_failed(self, experiment_id: uuid.UUID, error_message: str) -> Experiment:
         """Set ``status="failed"`` with an error message and record ``completed_at``.
 
         Args:
@@ -161,6 +163,7 @@ class ExperimentRepository(BaseRepository[Experiment]):
         )
         if instance is None:
             from sqlalchemy.exc import NoResultFound
+
             raise NoResultFound(f"Experiment {experiment_id} not found")
         log.error(
             "experiment.failed",
@@ -185,6 +188,7 @@ class ExperimentRepository(BaseRepository[Experiment]):
         )
         if instance is None:
             from sqlalchemy.exc import NoResultFound
+
             raise NoResultFound(f"Experiment {experiment_id} not found")
         return instance
 
@@ -217,15 +221,11 @@ class ExperimentRepository(BaseRepository[Experiment]):
             List of running ``Experiment`` rows.
         """
         result = await self.session.execute(
-            select(Experiment)
-            .where(Experiment.status == "running")
-            .order_by(Experiment.started_at)
+            select(Experiment).where(Experiment.status == "running").order_by(Experiment.started_at)
         )
         return list(result.scalars().all())
 
-    async def get_with_results(
-        self, experiment_id: uuid.UUID
-    ) -> Optional[Experiment]:
+    async def get_with_results(self, experiment_id: uuid.UUID) -> Experiment | None:
         """Eagerly load an experiment with its full result relationships.
 
         Loads ``trained_models``, ``residuals`` (summary rows), ``error_patterns``,
@@ -252,9 +252,7 @@ class ExperimentRepository(BaseRepository[Experiment]):
     # Child entity writers
     # ------------------------------------------------------------------
 
-    async def add_trained_model(
-        self, experiment_id: uuid.UUID, **kwargs: Any
-    ) -> TrainedModel:
+    async def add_trained_model(self, experiment_id: uuid.UUID, **kwargs: Any) -> TrainedModel:
         """Insert a ``TrainedModel`` row for the given experiment.
 
         Args:
@@ -273,7 +271,9 @@ class ExperimentRepository(BaseRepository[Experiment]):
         try:
             await self.session.flush()
         except IntegrityError as exc:
-            log.error("trained_model.integrity_error", experiment_id=str(experiment_id), error=str(exc))
+            log.error(
+                "trained_model.integrity_error", experiment_id=str(experiment_id), error=str(exc)
+            )
             raise
         log.debug(
             "trained_model.created",
@@ -332,9 +332,7 @@ class ExperimentRepository(BaseRepository[Experiment]):
         )
         return total
 
-    async def add_error_pattern(
-        self, experiment_id: uuid.UUID, **kwargs: Any
-    ) -> ErrorPattern:
+    async def add_error_pattern(self, experiment_id: uuid.UUID, **kwargs: Any) -> ErrorPattern:
         """Insert an ``ErrorPattern`` row for the given experiment.
 
         Args:
@@ -406,9 +404,7 @@ class ExperimentRepository(BaseRepository[Experiment]):
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
-    async def get_error_patterns(
-        self, experiment_id: uuid.UUID
-    ) -> list[ErrorPattern]:
+    async def get_error_patterns(self, experiment_id: uuid.UUID) -> list[ErrorPattern]:
         """Return all error patterns for an experiment, ordered by effect size.
 
         Args:

@@ -7,10 +7,7 @@ when given a synthetic dataset where the ground truth is known.
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
-
-from tests.fixtures.synthetic_datasets import make_regression_with_latent
 
 
 @pytest.mark.statistical

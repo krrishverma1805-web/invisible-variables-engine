@@ -63,13 +63,15 @@ def generate_temporal_confound(
     trend = np.linspace(0, 10, n_samples)
     noise = rng.normal(0, 1, n_samples)
 
-    return pd.DataFrame({
-        "date": dates,
-        "feature_1": rng.normal(0, 1, n_samples),
-        "feature_2": rng.normal(0, 1, n_samples),
-        "feature_3": rng.normal(0, 1, n_samples),
-        "target": trend + rng.normal(0, 1, n_samples) * 2 + noise,
-    })
+    return pd.DataFrame(
+        {
+            "date": dates,
+            "feature_1": rng.normal(0, 1, n_samples),
+            "feature_2": rng.normal(0, 1, n_samples),
+            "feature_3": rng.normal(0, 1, n_samples),
+            "target": trend + rng.normal(0, 1, n_samples) * 2 + noise,
+        }
+    )
 
 
 def generate_mixed_types(n_samples: int = 1000, seed: int = 42) -> pd.DataFrame:
@@ -79,15 +81,22 @@ def generate_mixed_types(n_samples: int = 1000, seed: int = 42) -> pd.DataFrame:
     education = rng.choice(["high_school", "bachelor", "master", "phd"], n_samples)
     age = rng.integers(18, 65, n_samples).astype(float)
     income = rng.normal(50000, 15000, n_samples)
-    target = age * 0.5 + income * 0.0001 + (regions == "north").astype(float) * 3 + rng.normal(0, 1, n_samples)
+    target = (
+        age * 0.5
+        + income * 0.0001
+        + (regions == "north").astype(float) * 3
+        + rng.normal(0, 1, n_samples)
+    )
 
-    return pd.DataFrame({
-        "age": age,
-        "income": income,
-        "region": regions,
-        "education": education,
-        "target": target,
-    })
+    return pd.DataFrame(
+        {
+            "age": age,
+            "income": income,
+            "region": regions,
+            "education": education,
+            "target": target,
+        }
+    )
 
 
 SCENARIO_GENERATORS = {
@@ -129,6 +138,7 @@ def main() -> None:
         # Save ground truth labels for evaluation
         gt_path = output_dir / f"{args.scenario}_ground_truth.npy"
         import numpy as np
+
         np.save(gt_path, hidden_groups)
         print(f"  Ground truth saved to: {gt_path}")
     elif args.scenario == "temporal":

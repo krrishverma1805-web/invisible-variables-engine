@@ -22,11 +22,9 @@ from __future__ import annotations
 
 from typing import Any
 
-import numpy as np
 import pandas as pd
 from pydantic import BaseModel, Field
 
-from ive.config import get_settings
 from ive.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -34,17 +32,17 @@ logger = get_logger(__name__)
 # ---------------------------------------------------------------------------
 # Thresholds
 # ---------------------------------------------------------------------------
-_MISSING_MEDIUM = 30.0      # % null → medium issue
-_MISSING_HIGH = 70.0        # % null → high issue
-_NEAR_CONSTANT_UNIQUE = 5   # fewer unique numeric values → near-constant
-_HIGH_CORR = 0.95           # |r| above this → high-correlation issue
-_CORR_REPORT_MIN = 0.30     # |r| below this → skip in matrix
-_OUTLIER_HIGH = 50.0        # >50% outliers → low issue
-_SKEW_THRESHOLD = 2.0       # |skewness| above this → low issue
-_IMBALANCE_RATIO = 0.20     # minority/majority below this → imbalanced
-_TOP_VALUES = 10            # max top_values entries per categorical column
-_TOP_CORRELATIONS = 20      # max CorrelationPairs returned
-_SAMPLE_N = 5               # random sample values shown per column
+_MISSING_MEDIUM = 30.0  # % null → medium issue
+_MISSING_HIGH = 70.0  # % null → high issue
+_NEAR_CONSTANT_UNIQUE = 5  # fewer unique numeric values → near-constant
+_HIGH_CORR = 0.95  # |r| above this → high-correlation issue
+_CORR_REPORT_MIN = 0.30  # |r| below this → skip in matrix
+_OUTLIER_HIGH = 50.0  # >50% outliers → low issue
+_SKEW_THRESHOLD = 2.0  # |skewness| above this → low issue
+_IMBALANCE_RATIO = 0.20  # minority/majority below this → imbalanced
+_TOP_VALUES = 10  # max top_values entries per categorical column
+_TOP_CORRELATIONS = 20  # max CorrelationPairs returned
+_SAMPLE_N = 5  # random sample values shown per column
 
 # Quality score deductions
 _DEDUCT_HIGH = 10
@@ -56,11 +54,12 @@ _DEDUCT_LOW = 2
 # Pydantic models
 # ---------------------------------------------------------------------------
 
+
 class TargetProfile(BaseModel):
     """Statistical summary of the target / label column."""
 
     name: str
-    task_type: str          # "regression" | "classification"
+    task_type: str  # "regression" | "classification"
 
     # Regression stats
     mean: float | None = None
@@ -124,9 +123,9 @@ class CorrelationPair(BaseModel):
 class QualityIssue(BaseModel):
     """A data quality issue detected during profiling."""
 
-    severity: str                   # "high" | "medium" | "low"
-    category: str                   # see module-level constants below
-    column: str | None = None       # None → dataset-level issue
+    severity: str  # "high" | "medium" | "low"
+    category: str  # see module-level constants below
+    column: str | None = None  # None → dataset-level issue
     message: str
     suggestion: str
 
@@ -146,7 +145,7 @@ class DataProfile(BaseModel):
     correlation_matrix: dict[str, dict[str, float]]
     top_correlations: list[CorrelationPair]
 
-    quality_score: float            # 0–100
+    quality_score: float  # 0–100
     quality_issues: list[QualityIssue]
 
     recommendations: list[str]
@@ -155,6 +154,7 @@ class DataProfile(BaseModel):
 # ---------------------------------------------------------------------------
 # Main profiler
 # ---------------------------------------------------------------------------
+
 
 class DataProfiler:
     """Generate a :class:`DataProfile` from a Pandas ``DataFrame``.
@@ -202,7 +202,7 @@ class DataProfiler:
             type_map = {ct.name: ct.detected_type for ct in column_types}
 
         # ── Basic metadata ────────────────────────────────────────────
-        memory_mb = round(df.memory_usage(deep=True).sum() / (1024 ** 2), 4)
+        memory_mb = round(df.memory_usage(deep=True).sum() / (1024**2), 4)
 
         # ── Target profiling ─────────────────────────────────────────
         target_stats = self._profile_target(df, target_column)
@@ -268,8 +268,8 @@ class DataProfiler:
 
         # --- Task type detection ---
         is_int_like = is_numeric and (
-            pd.api.types.is_integer_dtype(series) or
-            (series == series.astype(int, errors="ignore")).all()
+            pd.api.types.is_integer_dtype(series)
+            or (series == series.astype(int, errors="ignore")).all()
         )
         task_type = (
             "classification"
@@ -465,8 +465,7 @@ class DataProfiler:
         # Select numeric columns, exclude time column
         exclude = {time_column} if time_column else set()
         num_cols = [
-            c for c in df.columns
-            if pd.api.types.is_numeric_dtype(df[c]) and c not in exclude
+            c for c in df.columns if pd.api.types.is_numeric_dtype(df[c]) and c not in exclude
         ]
 
         if len(num_cols) < 2:
@@ -543,31 +542,37 @@ class DataProfiler:
         for cp in col_profiles:
             # Missing values
             if cp.null_pct > _MISSING_HIGH:
-                issues.append(QualityIssue(
-                    severity="high",
-                    category="missing_values",
-                    column=cp.name,
-                    message=f"'{cp.name}' is {cp.null_pct:.1f}% null.",
-                    suggestion=f"Consider dropping or imputing '{cp.name}'.",
-                ))
+                issues.append(
+                    QualityIssue(
+                        severity="high",
+                        category="missing_values",
+                        column=cp.name,
+                        message=f"'{cp.name}' is {cp.null_pct:.1f}% null.",
+                        suggestion=f"Consider dropping or imputing '{cp.name}'.",
+                    )
+                )
             elif cp.null_pct > _MISSING_MEDIUM:
-                issues.append(QualityIssue(
-                    severity="medium",
-                    category="missing_values",
-                    column=cp.name,
-                    message=f"'{cp.name}' is {cp.null_pct:.1f}% null.",
-                    suggestion=f"Consider imputing missing values in '{cp.name}'.",
-                ))
+                issues.append(
+                    QualityIssue(
+                        severity="medium",
+                        category="missing_values",
+                        column=cp.name,
+                        message=f"'{cp.name}' is {cp.null_pct:.1f}% null.",
+                        suggestion=f"Consider imputing missing values in '{cp.name}'.",
+                    )
+                )
 
             # Constant column (zero unique non-null values, or 1 unique value)
             if cp.unique_count <= 1 and cp.null_pct < 100.0:
-                issues.append(QualityIssue(
-                    severity="high",
-                    category="constant_column",
-                    column=cp.name,
-                    message=f"'{cp.name}' has {cp.unique_count} unique value(s) — it is effectively constant.",
-                    suggestion=f"Remove '{cp.name}'; it provides no predictive information.",
-                ))
+                issues.append(
+                    QualityIssue(
+                        severity="high",
+                        category="constant_column",
+                        column=cp.name,
+                        message=f"'{cp.name}' has {cp.unique_count} unique value(s) — it is effectively constant.",
+                        suggestion=f"Remove '{cp.name}'; it provides no predictive information.",
+                    )
+                )
 
             # Near-constant numeric
             elif (
@@ -575,39 +580,45 @@ class DataProfiler:
                 and cp.unique_count < _NEAR_CONSTANT_UNIQUE
                 and cp.null_pct < 100.0
             ):
-                issues.append(QualityIssue(
-                    severity="medium",
-                    category="constant_column",
-                    column=cp.name,
-                    message=f"'{cp.name}' has only {cp.unique_count} unique numeric values.",
-                    suggestion=f"Treat '{cp.name}' as categorical or review its meaning.",
-                ))
+                issues.append(
+                    QualityIssue(
+                        severity="medium",
+                        category="constant_column",
+                        column=cp.name,
+                        message=f"'{cp.name}' has only {cp.unique_count} unique numeric values.",
+                        suggestion=f"Treat '{cp.name}' as categorical or review its meaning.",
+                    )
+                )
 
             # Outliers
             if cp.outlier_count is not None:
                 non_null_count = max(1, cp.null_count - len(df) + len(df))  # re-derive
                 non_null_n = len(df) - cp.null_count
                 if non_null_n > 0 and (cp.outlier_count / non_null_n * 100) > _OUTLIER_HIGH:
-                    issues.append(QualityIssue(
-                        severity="low",
-                        category="outliers",
-                        column=cp.name,
-                        message=(
-                            f"'{cp.name}' has {cp.outlier_count} IQR outliers "
-                            f"({cp.outlier_count / non_null_n * 100:.1f}%)."
-                        ),
-                        suggestion=f"Consider capping or transforming '{cp.name}'.",
-                    ))
+                    issues.append(
+                        QualityIssue(
+                            severity="low",
+                            category="outliers",
+                            column=cp.name,
+                            message=(
+                                f"'{cp.name}' has {cp.outlier_count} IQR outliers "
+                                f"({cp.outlier_count / non_null_n * 100:.1f}%)."
+                            ),
+                            suggestion=f"Consider capping or transforming '{cp.name}'.",
+                        )
+                    )
 
             # Heavy skewness
             if cp.skewness is not None and abs(cp.skewness) > _SKEW_THRESHOLD:
-                issues.append(QualityIssue(
-                    severity="low",
-                    category="skewness",
-                    column=cp.name,
-                    message=f"'{cp.name}' is heavily skewed (skewness={cp.skewness:.2f}).",
-                    suggestion=f"Consider log or Box-Cox transform for '{cp.name}'.",
-                ))
+                issues.append(
+                    QualityIssue(
+                        severity="low",
+                        category="skewness",
+                        column=cp.name,
+                        message=f"'{cp.name}' is heavily skewed (skewness={cp.skewness:.2f}).",
+                        suggestion=f"Consider log or Box-Cox transform for '{cp.name}'.",
+                    )
+                )
 
         # High correlation pairs
         for pair in top_corrs:
@@ -616,35 +627,39 @@ class DataProfiler:
                 and pair.feature_a != target_column
                 and pair.feature_b != target_column
             ):
-                issues.append(QualityIssue(
-                    severity="medium",
-                    category="high_correlation",
-                    column=None,
-                    message=(
-                        f"'{pair.feature_a}' and '{pair.feature_b}' are highly correlated "
-                        f"(r={pair.correlation:.2f})."
-                    ),
-                    suggestion=(
-                        f"Consider removing one of '{pair.feature_a}' or '{pair.feature_b}' "
-                        "to reduce multicollinearity."
-                    ),
-                ))
+                issues.append(
+                    QualityIssue(
+                        severity="medium",
+                        category="high_correlation",
+                        column=None,
+                        message=(
+                            f"'{pair.feature_a}' and '{pair.feature_b}' are highly correlated "
+                            f"(r={pair.correlation:.2f})."
+                        ),
+                        suggestion=(
+                            f"Consider removing one of '{pair.feature_a}' or '{pair.feature_b}' "
+                            "to reduce multicollinearity."
+                        ),
+                    )
+                )
 
         # Class imbalance
         if target_stats.is_imbalanced:
-            issues.append(QualityIssue(
-                severity="high",
-                category="class_imbalance",
-                column=target_column,
-                message=(
-                    f"Target '{target_column}' is class-imbalanced. "
-                    f"Distribution: {dict(list(target_stats.class_distribution.items())[:5])!r}"
-                ),
-                suggestion=(
-                    "Apply SMOTE, class weighting, or oversample the minority class "
-                    "before training."
-                ),
-            ))
+            issues.append(
+                QualityIssue(
+                    severity="high",
+                    category="class_imbalance",
+                    column=target_column,
+                    message=(
+                        f"Target '{target_column}' is class-imbalanced. "
+                        f"Distribution: {dict(list(target_stats.class_distribution.items())[:5])!r}"
+                    ),
+                    suggestion=(
+                        "Apply SMOTE, class weighting, or oversample the minority class "
+                        "before training."
+                    ),
+                )
+            )
 
         return issues
 

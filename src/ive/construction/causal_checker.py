@@ -31,7 +31,7 @@ class CausalChecker:
     def filter(
         self,
         candidates: list[LatentVariableCandidate],
-        df: object,                    # pd.DataFrame
+        df: object,  # pd.DataFrame
         target_column: str | None = None,
     ) -> list[LatentVariableCandidate]:
         """

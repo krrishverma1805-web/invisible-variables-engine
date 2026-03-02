@@ -8,7 +8,7 @@ description: Requires proof before marking work complete — no "trust me, it wo
 ## Core Principle
 
 > **"The code looks correct" is NOT validation.**
-> 
+>
 > Every change must be verified with empirical evidence before being marked complete.
 
 ## Validation Methods by Change Type
@@ -46,7 +46,7 @@ description: Requires proof before marking work complete — no "trust me, it wo
 ### API Endpoint Verification
 ```powershell
 # Good: Actual test showing response
-curl -X POST http://localhost:3000/api/login -d '{"email":"test@test.com"}' 
+curl -X POST http://localhost:3000/api/login -d '{"email":"test@test.com"}'
 # Output: {"success":true,"token":"..."}
 
 # Bad: Just saying "endpoint works"

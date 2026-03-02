@@ -62,8 +62,8 @@ celery_app.conf.task_queues = (
 # ---------------------------------------------------------------------------
 
 celery_app.conf.task_routes = {
-    "ive.workers.tasks.run_experiment"   : {"queue": "analysis"},
-    "ive.workers.tasks.profile_dataset"  : {"queue": "analysis"},
+    "ive.workers.tasks.run_experiment": {"queue": "analysis"},
+    "ive.workers.tasks.profile_dataset": {"queue": "analysis"},
     "ive.workers.tasks.cancel_experiment": {"queue": "high_priority"},
     "ive.workers.tasks.health_check_task": {"queue": "default"},
 }
@@ -77,29 +77,23 @@ celery_app.conf.update(
     task_serializer=settings.celery_task_serializer,
     result_serializer="json",
     accept_content=["json"],
-
     # Time
     timezone="UTC",
     enable_utc=True,
-
     # Reliability
-    task_track_started=True,         # STARTED state visible before PROGRESS
-    task_acks_late=True,             # ack only after task completes (no silent drops)
-    task_reject_on_worker_lost=True, # re-queue if worker dies mid-task
-
+    task_track_started=True,  # STARTED state visible before PROGRESS
+    task_acks_late=True,  # ack only after task completes (no silent drops)
+    task_reject_on_worker_lost=True,  # re-queue if worker dies mid-task
     # Worker resource limits
-    worker_prefetch_multiplier=1,    # one task at a time per child (memory safety)
+    worker_prefetch_multiplier=1,  # one task at a time per child (memory safety)
     worker_max_tasks_per_child=settings.celery_max_tasks_per_child,
-
     # Results
     result_expires=settings.celery_result_expires,
-    result_extended=True,            # store task meta (state, traceback) longer
-
+    result_extended=True,  # store task meta (state, traceback) longer
     # Default queue
     task_default_queue="default",
     task_default_exchange="default",
     task_default_routing_key="default",
-
     # Retry policy for connection errors
     broker_connection_retry_on_startup=True,
     broker_connection_max_retries=10,

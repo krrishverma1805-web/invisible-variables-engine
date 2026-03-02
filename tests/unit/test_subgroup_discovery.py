@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from ive.detection.subgroup_discovery import SubgroupDiscoverer
 
@@ -20,7 +19,7 @@ class TestSubgroupDiscoverer:
         discoverer = SubgroupDiscoverer(min_coverage=0.5)
         # Mask with only 10% coverage
         mask = np.zeros(len(residuals_array), dtype=bool)
-        mask[:int(len(residuals_array) * 0.1)] = True
+        mask[: int(len(residuals_array) * 0.1)] = True
         wracc = discoverer._compute_wracc(mask, residuals_array)
         assert wracc == 0.0
 
@@ -29,7 +28,7 @@ class TestSubgroupDiscoverer:
         group1 = np.array([1.0, 1.5, 2.0, 1.8])
         group2 = np.array([5.0, 5.5, 6.0, 5.8])
         d = SubgroupDiscoverer()._cohens_d(group1, group2)
-        assert d < 0   # group1 mean < group2 mean
+        assert d < 0  # group1 mean < group2 mean
 
     def test_cohens_d_identical_groups(self) -> None:
         """Cohen's d should be 0 for identical groups."""

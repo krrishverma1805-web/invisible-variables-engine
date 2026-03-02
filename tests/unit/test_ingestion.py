@@ -14,7 +14,7 @@ No real database or filesystem access required.
 from __future__ import annotations
 
 import io
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import numpy as np
 import pandas as pd
@@ -22,10 +22,10 @@ import pytest
 
 from ive.data.ingestion import DataIngestionService, DatasetValidationError
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_df(n: int = 150, target: str = "y") -> pd.DataFrame:
     """Minimal valid DataFrame with n rows."""
@@ -45,12 +45,14 @@ def _make_svc() -> DataIngestionService:
     """Build a DataIngestionService with a mocked artifact store."""
     svc = DataIngestionService.__new__(DataIngestionService)
     from ive.utils.logging import get_logger
+
     svc.logger = get_logger("test.ingestion")
     store = AsyncMock()
     store.save_file = AsyncMock(return_value="/artifacts/test.csv")
     store.delete_file = AsyncMock()
     svc.store = store
     from ive.config import get_settings
+
     svc.settings = get_settings()
     return svc
 
@@ -58,6 +60,7 @@ def _make_svc() -> DataIngestionService:
 # ===========================================================================
 # CSV Parsing
 # ===========================================================================
+
 
 @pytest.mark.unit
 class TestCSVParsing:
@@ -88,7 +91,7 @@ class TestCSVParsing:
         svc = _make_svc()
         df = _make_df()
         raw = _df_to_csv_bytes(df)
-        bom_data = b"\xef\xbb\xbf" + raw   # UTF-8 BOM
+        bom_data = b"\xef\xbb\xbf" + raw  # UTF-8 BOM
         result = svc._parse_csv(bom_data, "bom.csv")
         assert "x1" in result.columns, "BOM not stripped — column name mangled"
 
@@ -142,6 +145,7 @@ class TestCSVParsing:
 # Column Type Detection
 # ===========================================================================
 
+
 @pytest.mark.unit
 class TestColumnTypeDetection:
     """Tests for DataIngestionService._detect_column_types."""
@@ -183,7 +187,6 @@ class TestColumnTypeDetection:
 
     def test_detect_text_columns(self) -> None:
         """High-cardinality string columns with no obvious pattern are 'text'."""
-        import uuid as _uuid
         rng = np.random.default_rng(7)
         # Unique sentences — high cardinality, not IDs
         sentences = [f"sentence {i} blah blah" for i in range(300)]
@@ -210,13 +213,16 @@ class TestColumnTypeDetection:
 # Validation
 # ===========================================================================
 
+
 @pytest.mark.unit
 class TestValidation:
     """Tests for DataIngestionService._validate."""
 
     def _run_validate(self, df, target_column="y", time_column=None, file_bytes=1000):
         svc = _make_svc()
-        return svc._validate(df, svc._detect_column_types(df), target_column, time_column, file_bytes)
+        return svc._validate(
+            df, svc._detect_column_types(df), target_column, time_column, file_bytes
+        )
 
     def test_validate_passes_for_valid_dataset(self, sample_regression_df: pd.DataFrame) -> None:
         """A clean, sufficiently large dataset generates no errors."""
@@ -258,7 +264,7 @@ class TestValidation:
     def test_validate_target_must_have_variance(self) -> None:
         """DatasetValidationError raised when target is a constant."""
         df = _make_df(n=200)
-        df["y"] = 42.0   # zero variance
+        df["y"] = 42.0  # zero variance
         svc = _make_svc()
         with pytest.raises(DatasetValidationError, match="[Vv]ariance|constant"):
             svc._validate(df, svc._detect_column_types(df), "y", None, 1000)
@@ -284,14 +290,15 @@ class TestValidation:
         )
         svc = _make_svc()
         warnings = svc._validate(df, svc._detect_column_types(df), "y", None, 1000)
-        assert any("almost_empty" in w for w in warnings), (
-            f"Expected a warning about 'almost_empty', got: {warnings}"
-        )
+        assert any(
+            "almost_empty" in w for w in warnings
+        ), f"Expected a warning about 'almost_empty', got: {warnings}"
 
 
 # ===========================================================================
 # Task type detection
 # ===========================================================================
+
 
 @pytest.mark.unit
 class TestTaskTypeDetection:
@@ -307,7 +314,11 @@ class TestTaskTypeDetection:
         rng = np.random.default_rng(1)
         n = 200
         df = pd.DataFrame(
-            {"x1": rng.standard_normal(n), "x2": rng.standard_normal(n), "y": rng.standard_normal(n)}
+            {
+                "x1": rng.standard_normal(n),
+                "x2": rng.standard_normal(n),
+                "y": rng.standard_normal(n),
+            }
         )
         schema = self._get_schema(df, "y")
         assert schema["detected_task"] == "regression"
@@ -344,6 +355,7 @@ class TestTaskTypeDetection:
 # ===========================================================================
 # Full ingestion (mocked store, no real DB)
 # ===========================================================================
+
 
 @pytest.mark.unit
 class TestFullIngestion:
@@ -410,7 +422,11 @@ class TestFullIngestion:
         rng = np.random.default_rng(99)
         n = 150
         df = pd.DataFrame(
-            {"x1": rng.standard_normal(n), "x2": rng.standard_normal(n), "y": rng.standard_normal(n)}
+            {
+                "x1": rng.standard_normal(n),
+                "x2": rng.standard_normal(n),
+                "y": rng.standard_normal(n),
+            }
         )
         buf = io.StringIO()
         df.to_csv(buf, index=False, sep=sep)
@@ -419,4 +435,6 @@ class TestFullIngestion:
         svc = _make_svc()
         with patch("ive.data.ingestion.get_artifact_store", return_value=svc.store):
             result = await svc.ingest(csv_bytes, "delimit.csv", "y", session=None)
-        assert result.row_count == n, f"Delimiter {sep!r}: expected {n} rows, got {result.row_count}"
+        assert (
+            result.row_count == n
+        ), f"Delimiter {sep!r}: expected {n} rows, got {result.row_count}"

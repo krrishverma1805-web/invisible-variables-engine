@@ -10,13 +10,13 @@
 param(
     [Parameter(Mandatory = $true, Position = 0)]
     [string]$Pattern,
-    
+
     [Parameter(Position = 1)]
     [string]$Path = ".",
-    
+
     [Parameter()]
     [string]$FileType,
-    
+
     [Parameter()]
     [switch]$CaseSensitive
 )
@@ -26,18 +26,18 @@ $rgAvailable = Get-Command rg -ErrorAction SilentlyContinue
 
 if ($rgAvailable) {
     Write-Host "# Using ripgrep" -ForegroundColor Gray
-    
+
     $rgArgs = @($Pattern, $Path, "--color=always")
-    
+
     if ($FileType) {
         $rgArgs += "--type"
         $rgArgs += $FileType
     }
-    
+
     if ($CaseSensitive) {
         $rgArgs += "--case-sensitive"
     }
-    
+
     & rg @rgArgs
     exit $LASTEXITCODE
 }
@@ -67,16 +67,16 @@ if (Test-Path $Path -PathType Container) {
 
 try {
     $results = Get-ChildItem -Path $Path -Recurse -File -ErrorAction SilentlyContinue |
-    Where-Object { 
-        if ($FileType) { 
-            $_.Extension -eq ".$FileType" 
+    Where-Object {
+        if ($FileType) {
+            $_.Extension -eq ".$FileType"
         }
-        else { 
-            $true 
-        } 
+        else {
+            $true
+        }
     } |
     Select-String -Pattern $Pattern -CaseSensitive:$CaseSensitive
-    
+
     if ($results) {
         $results | ForEach-Object {
             $relativePath = $_.Path

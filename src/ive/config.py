@@ -42,6 +42,7 @@ logger = logging.getLogger(__name__)
 # Enums
 # ---------------------------------------------------------------------------
 
+
 class Environment(str, Enum):
     """Valid deployment environments."""
 
@@ -53,6 +54,7 @@ class Environment(str, Enum):
 # ---------------------------------------------------------------------------
 # Sub-configuration classes
 # ---------------------------------------------------------------------------
+
 
 class DatabaseSettings(BaseSettings):
     """PostgreSQL connection and pool configuration.
@@ -69,15 +71,20 @@ class DatabaseSettings(BaseSettings):
         description="Async SQLAlchemy DSN for PostgreSQL (must use asyncpg driver).",
     )
     database_pool_size: int = Field(
-        default=10, ge=1, le=100,
+        default=10,
+        ge=1,
+        le=100,
         description="Number of persistent connections in the SQLAlchemy pool.",
     )
     database_max_overflow: int = Field(
-        default=20, ge=0, le=100,
+        default=20,
+        ge=0,
+        le=100,
         description="Max temporary connections allowed beyond pool_size.",
     )
     database_pool_timeout: int = Field(
-        default=30, ge=5,
+        default=30,
+        ge=5,
         description="Seconds to wait for a connection from the pool before raising.",
     )
 
@@ -93,9 +100,7 @@ class DatabaseSettings(BaseSettings):
     def ensure_async_driver(cls, v: str) -> str:
         """Auto-correct ``postgresql://`` → ``postgresql+asyncpg://``."""
         if not v.startswith("postgresql"):
-            raise ValueError(
-                f"DATABASE_URL must start with 'postgresql'; got '{v[:30]}...'"
-            )
+            raise ValueError(f"DATABASE_URL must start with 'postgresql'; got '{v[:30]}...'")
         if v.startswith("postgresql://"):
             return v.replace("postgresql://", "postgresql+asyncpg://", 1)
         return v
@@ -126,7 +131,9 @@ class CelerySettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="", extra="ignore")
 
     celery_concurrency: int = Field(
-        default=4, ge=1, le=32,
+        default=4,
+        ge=1,
+        le=32,
         description="Number of concurrent worker processes per container.",
     )
     celery_task_serializer: Literal["json", "pickle", "msgpack"] = Field(
@@ -134,11 +141,13 @@ class CelerySettings(BaseSettings):
         description="Task payload serialisation format.",
     )
     celery_result_expires: int = Field(
-        default=86400, ge=3600,
+        default=86400,
+        ge=3600,
         description="Result TTL in seconds (default 24 h).",
     )
     celery_max_tasks_per_child: int = Field(
-        default=100, ge=1,
+        default=100,
+        ge=1,
         description="Recycle worker process after N tasks (prevents memory leaks).",
     )
 
@@ -161,11 +170,14 @@ class SecuritySettings(BaseSettings):
         description="Comma-separated list of valid API keys.",
     )
     rate_limit_requests: int = Field(
-        default=100, ge=1, le=10_000,
+        default=100,
+        ge=1,
+        le=10_000,
         description="Max requests allowed per rate-limit window.",
     )
     rate_limit_window: int = Field(
-        default=60, ge=1,
+        default=60,
+        ge=1,
         description="Rate-limit sliding window in seconds.",
     )
 
@@ -196,23 +208,31 @@ class MLSettings(BaseSettings):
         description="Global random seed for reproducibility.",
     )
     default_cv_folds: int = Field(
-        default=5, ge=2, le=20,
+        default=5,
+        ge=2,
+        le=20,
         description="Default number of cross-validation folds.",
     )
     default_test_size: float = Field(
-        default=0.2, gt=0.0, lt=1.0,
+        default=0.2,
+        gt=0.0,
+        lt=1.0,
         description="Default held-out test fraction.",
     )
     max_features: int = Field(
-        default=100, ge=1,
+        default=100,
+        ge=1,
         description="Max features to consider (excess columns are pruned by importance).",
     )
     min_cluster_size: int = Field(
-        default=10, ge=2,
+        default=10,
+        ge=2,
         description="HDBSCAN min_cluster_size parameter.",
     )
     shap_sample_size: int = Field(
-        default=500, ge=50, le=10_000,
+        default=500,
+        ge=50,
+        le=10_000,
         description="Max rows passed to SHAP TreeExplainer (controls compute cost).",
     )
 
@@ -253,7 +273,9 @@ class StorageSettings(BaseSettings):
         description="Custom S3-compatible endpoint URL (e.g. MinIO). Empty = AWS default.",
     )
     max_upload_size_mb: int = Field(
-        default=500, ge=1, le=5000,
+        default=500,
+        ge=1,
+        le=5000,
         description="Maximum allowed file upload size in megabytes.",
     )
 
@@ -261,6 +283,7 @@ class StorageSettings(BaseSettings):
 # ---------------------------------------------------------------------------
 # Master settings class
 # ---------------------------------------------------------------------------
+
 
 class Settings(
     DatabaseSettings,
@@ -309,7 +332,9 @@ class Settings(
         description="Root log level.",
     )
     api_port: int = Field(
-        default=8000, ge=1024, le=65535,
+        default=8000,
+        ge=1024,
+        le=65535,
         description="Port the FastAPI server listens on.",
     )
     app_name: str = Field(
@@ -352,7 +377,9 @@ class Settings(
         the standard ``psycopg2`` driver.
         """
         return self.database_url.replace(
-            "postgresql+asyncpg://", "postgresql://", 1,
+            "postgresql+asyncpg://",
+            "postgresql://",
+            1,
         )
 
     @property
@@ -376,7 +403,7 @@ class Settings(
     # ── Lifecycle validators ─────────────────────────────────────────────────
 
     @model_validator(mode="after")
-    def _validate_production_settings(self) -> "Settings":
+    def _validate_production_settings(self) -> Settings:
         """Enforce stricter rules when ``ENV=production``.
 
         Raises:
@@ -394,9 +421,7 @@ class Settings(
 
             # --- API keys must be configured ---
             if not self.api_keys_set:
-                raise ValueError(
-                    "VALID_API_KEYS must not be empty in production"
-                )
+                raise ValueError("VALID_API_KEYS must not be empty in production")
 
             # --- DEBUG should be off ---
             if self.debug:
@@ -406,9 +431,7 @@ class Settings(
                     RuntimeWarning,
                     stacklevel=2,
                 )
-                logger.warning(
-                    "DEBUG mode is enabled in production — this is not recommended"
-                )
+                logger.warning("DEBUG mode is enabled in production — this is not recommended")
 
         return self
 
@@ -454,6 +477,7 @@ class Settings(
 # ---------------------------------------------------------------------------
 # Singleton accessor
 # ---------------------------------------------------------------------------
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

@@ -32,9 +32,9 @@ class VariableSynthesizer:
 
     def synthesize(
         self,
-        patterns: list[object],          # list[ScoredPattern]
+        patterns: list[object],  # list[ScoredPattern]
         cluster_labels: np.ndarray | None,
-        df: object,                       # pd.DataFrame
+        df: object,  # pd.DataFrame
         feature_columns: list[str],
     ) -> list[LatentVariableCandidate]:
         """

@@ -39,7 +39,7 @@ Check this is a valid project:
 ```powershell
 # Look for common project indicators
 $indicators = @(
-    "package.json", "requirements.txt", "Cargo.toml", 
+    "package.json", "requirements.txt", "Cargo.toml",
     "go.mod", "pom.xml", "*.csproj", "Gemfile"
 )
 ```
@@ -47,7 +47,7 @@ $indicators = @(
 **Bash:**
 ```bash
 # Look for common project indicators
-indicators=("package.json" "requirements.txt" "Cargo.toml" 
+indicators=("package.json" "requirements.txt" "Cargo.toml"
     "go.mod" "pom.xml" "*.csproj" "Gemfile")
 ```
 
@@ -66,7 +66,7 @@ Display banner:
 
 **PowerShell:**
 ```powershell
-Get-ChildItem -Recurse -Directory | 
+Get-ChildItem -Recurse -Directory |
     Where-Object { $_.Name -notmatch "node_modules|\.git|__pycache__|dist|build" }
 ```
 
@@ -115,7 +115,7 @@ Scan for common patterns:
 **PowerShell:**
 ```powershell
 # Node.js example
-Get-Content "package.json" | ConvertFrom-Json | 
+Get-Content "package.json" | ConvertFrom-Json |
     Select-Object -ExpandProperty dependencies
 ```
 

@@ -10,3 +10,9 @@ Codebase mapping complete.
 
 - Resolved `ImportError: cannot import name 'log_request'` in API container by implementing the missing function in `src/ive/utils/logging.py`.
 - Documented investigation and fix in `.gsd/DEBUG.md`.
+
+## Testing Architecture
+
+- Created `.pre-commit-config.yaml` to run Ruff & Mypy checks locally.
+- Configured `.github/workflows/ci.yml` for automated CI/CD PR tests.
+- Documented testing commands and strategy in `docs/testing.md`.

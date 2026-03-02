@@ -32,7 +32,7 @@ os.environ.setdefault("ENV", "development")
 async def seed() -> None:
     """Run the full seed sequence against the configured database."""
     from ive.config import get_settings
-    from ive.db.database import init_db, close_db, get_session, Base
+    from ive.db.database import close_db, get_session, init_db
     from ive.db.models import Dataset, Experiment
 
     settings = get_settings()
@@ -109,7 +109,8 @@ def main() -> None:
         print("⚠️  --reset flag set: dropping and recreating all tables...")
 
         async def _run():
-            from ive.db.database import init_db, close_db, _engine
+            from ive.db.database import _engine, close_db, init_db
+
             await init_db()
             await reset_and_seed(_engine)
             await seed()

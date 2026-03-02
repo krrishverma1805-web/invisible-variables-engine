@@ -26,10 +26,10 @@ from ive.data.profiler import (
     QualityIssue,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
+
 
 def _build_regression_df(n: int = 500, seed: int = 42) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
@@ -58,6 +58,7 @@ def _build_classification_df(n: int = 500, seed: int = 7) -> pd.DataFrame:
 # ===========================================================================
 # Core profile output structure
 # ===========================================================================
+
 
 @pytest.mark.unit
 class TestProfileOutput:
@@ -131,6 +132,7 @@ class TestProfileOutput:
 # Numeric column statistics
 # ===========================================================================
 
+
 @pytest.mark.unit
 class TestNumericColumnStats:
     """Tests for per-column numeric statistics in ColumnProfile."""
@@ -144,7 +146,7 @@ class TestNumericColumnStats:
         """mean is close to the true mean of the column."""
         rng = np.random.default_rng(0)
         n = 1_000
-        vals = rng.standard_normal(n) * 5 + 10   # mean ≈ 10
+        vals = rng.standard_normal(n) * 5 + 10  # mean ≈ 10
         df = pd.DataFrame({"x": vals, "z": rng.standard_normal(n), "y": rng.standard_normal(n)})
         cp = self._get_col(df, "x")
         assert cp.mean is not None
@@ -188,7 +190,7 @@ class TestNumericColumnStats:
         rng = np.random.default_rng(10)
         n = 200
         normal = rng.standard_normal(n)
-        outliers_arr = np.array([100.0, -100.0, 200.0])    # definitely outside IQR
+        outliers_arr = np.array([100.0, -100.0, 200.0])  # definitely outside IQR
         vals = np.concatenate([normal, outliers_arr])
         df = pd.DataFrame(
             {"x": vals, "z": rng.standard_normal(len(vals)), "y": rng.standard_normal(len(vals))}
@@ -211,6 +213,7 @@ class TestNumericColumnStats:
 # Categorical column statistics
 # ===========================================================================
 
+
 @pytest.mark.unit
 class TestCategoricalColumnStats:
     """Tests for categorical column profiling."""
@@ -225,7 +228,11 @@ class TestCategoricalColumnStats:
         rng = np.random.default_rng(0)
         n = 300
         df = pd.DataFrame(
-            {"cat": rng.choice(["A", "B", "C"], n), "x": rng.standard_normal(n), "y": rng.standard_normal(n)}
+            {
+                "cat": rng.choice(["A", "B", "C"], n),
+                "x": rng.standard_normal(n),
+                "y": rng.standard_normal(n),
+            }
         )
         cp = self._get_col(df, "cat")
         assert cp.top_values is not None
@@ -235,9 +242,13 @@ class TestCategoricalColumnStats:
         """top_values contains at most 10 entries."""
         rng = np.random.default_rng(1)
         n = 500
-        categories = [f"cat_{i}" for i in range(30)]   # 30 distinct values
+        categories = [f"cat_{i}" for i in range(30)]  # 30 distinct values
         df = pd.DataFrame(
-            {"cat": rng.choice(categories, n), "x": rng.standard_normal(n), "y": rng.standard_normal(n)}
+            {
+                "cat": rng.choice(categories, n),
+                "x": rng.standard_normal(n),
+                "y": rng.standard_normal(n),
+            }
         )
         cp = self._get_col(df, "cat")
         assert cp.top_values is not None
@@ -248,7 +259,11 @@ class TestCategoricalColumnStats:
         rng = np.random.default_rng(2)
         n = 200
         df = pd.DataFrame(
-            {"cat": rng.choice(["X", "Y"], n), "x": rng.standard_normal(n), "y": rng.standard_normal(n)}
+            {
+                "cat": rng.choice(["X", "Y"], n),
+                "x": rng.standard_normal(n),
+                "y": rng.standard_normal(n),
+            }
         )
         cp = self._get_col(df, "cat")
         assert cp.top_values is not None
@@ -266,6 +281,7 @@ class TestCategoricalColumnStats:
 # ===========================================================================
 # Quality issue detection
 # ===========================================================================
+
 
 @pytest.mark.unit
 class TestQualityIssues:
@@ -301,7 +317,9 @@ class TestQualityIssues:
         n = 300
         df = pd.DataFrame({"const": [7.0] * n, "x2": range(n), "y": range(n)})
         issues = self._issues(df)
-        const_issues = [i for i in issues if i.category == "constant_column" and i.column == "const"]
+        const_issues = [
+            i for i in issues if i.category == "constant_column" and i.column == "const"
+        ]
         assert const_issues, f"Expected constant_column issue, got: {issues}"
         assert const_issues[0].severity == "high"
 
@@ -349,7 +367,9 @@ class TestQualityIssues:
         rng = np.random.default_rng(7)
         n = 400
         # half near 0, half at 1000 (clear outliers for the lower group)
-        extremes = np.concatenate([rng.standard_normal(n // 2), rng.standard_normal(n // 2) * 0.1 + 1000])
+        extremes = np.concatenate(
+            [rng.standard_normal(n // 2), rng.standard_normal(n // 2) * 0.1 + 1000]
+        )
         df = pd.DataFrame({"x": extremes, "z": rng.standard_normal(n), "y": rng.standard_normal(n)})
         issues = DataProfiler().profile(df, target_column="y").quality_issues
         outlier_issues = [i for i in issues if i.category == "outliers"]
@@ -359,6 +379,7 @@ class TestQualityIssues:
 # ===========================================================================
 # All-null column edge case
 # ===========================================================================
+
 
 @pytest.mark.unit
 class TestEdgeCases:
@@ -372,7 +393,7 @@ class TestEdgeCases:
             {
                 "x1": rng.standard_normal(n),
                 "x2": rng.standard_normal(n),
-                "ghost": [float("nan")] * n,   # all-null
+                "ghost": [float("nan")] * n,  # all-null
                 "y": rng.standard_normal(n),
             }
         )
@@ -397,11 +418,11 @@ class TestEdgeCases:
         # Build a pathological DataFrame: many constant + missing columns
         df = pd.DataFrame(
             {
-                "x1": [float("nan")] * n,          # all null
-                "x2": [1.0] * n,                   # constant
+                "x1": [float("nan")] * n,  # all null
+                "x2": [1.0] * n,  # constant
                 "x3": [float("nan")] * (n - 5) + list(rng.standard_normal(5)),  # ~98% null
-                "x4": [2.0] * n,                   # constant
-                "y": rng.standard_normal(n),        # ok target
+                "x4": [2.0] * n,  # constant
+                "y": rng.standard_normal(n),  # ok target
             }
         )
         result = DataProfiler().profile(df, target_column="y")
@@ -415,21 +436,24 @@ class TestEdgeCases:
             for b, r_ab in row.items():
                 r_ba = matrix.get(b, {}).get(a)
                 if r_ba is not None:
-                    assert abs(r_ab - r_ba) < 1e-6, f"Asymmetry: [{a}][{b}]={r_ab} vs [{b}][{a}]={r_ba}"
+                    assert (
+                        abs(r_ab - r_ba) < 1e-6
+                    ), f"Asymmetry: [{a}][{b}]={r_ab} vs [{b}][{a}]={r_ba}"
 
     def test_top_correlations_sorted_by_abs(self, sample_large_df: pd.DataFrame) -> None:
         """top_correlations list is sorted descending by abs_correlation."""
         result = DataProfiler().profile(sample_large_df, target_column="target")
         pairs = result.top_correlations
         for i in range(len(pairs) - 1):
-            assert pairs[i].abs_correlation >= pairs[i + 1].abs_correlation, (
-                f"Not sorted at index {i}: {pairs[i].abs_correlation} < {pairs[i+1].abs_correlation}"
-            )
+            assert (
+                pairs[i].abs_correlation >= pairs[i + 1].abs_correlation
+            ), f"Not sorted at index {i}: {pairs[i].abs_correlation} < {pairs[i+1].abs_correlation}"
 
 
 # ===========================================================================
 # Quality score and recommendations
 # ===========================================================================
+
 
 @pytest.mark.unit
 class TestQualityScoreAndRecommendations:
@@ -456,7 +480,7 @@ class TestQualityScoreAndRecommendations:
         df = pd.DataFrame(
             {
                 "x1": rng.standard_normal(n),
-                "x2": [float("nan")] * n,    # all null → high issue
+                "x2": [float("nan")] * n,  # all null → high issue
                 "y": rng.standard_normal(n),
             }
         )
@@ -470,9 +494,9 @@ class TestQualityScoreAndRecommendations:
         col = np.where(rng.random(n) < 0.80, float("nan"), rng.standard_normal(n))
         df = pd.DataFrame({"x1": col, "x2": rng.standard_normal(n), "y": rng.standard_normal(n)})
         result = DataProfiler().profile(df, target_column="y")
-        assert len(result.recommendations) == len(set(result.recommendations)), (
-            "Duplicate recommendations found"
-        )
+        assert len(result.recommendations) == len(
+            set(result.recommendations)
+        ), "Duplicate recommendations found"
 
     def test_recommendations_correspond_to_issues(self) -> None:
         """Each recommendation maps to at least one quality issue."""
@@ -517,6 +541,4 @@ class TestQualityScoreAndRecommendations:
             else:
                 expected -= 2
         expected = max(0.0, round(expected, 2))
-        assert result.quality_score == expected, (
-            f"Expected {expected}, got {result.quality_score}"
-        )
+        assert result.quality_score == expected, f"Expected {expected}, got {result.quality_score}"

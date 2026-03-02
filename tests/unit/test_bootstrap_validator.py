@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
 
 from ive.construction.bootstrap_validator import BootstrapResult, BootstrapValidator

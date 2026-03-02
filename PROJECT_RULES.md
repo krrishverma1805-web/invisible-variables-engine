@@ -1,7 +1,7 @@
 # PROJECT_RULES.md — GSD Canonical Rules
 
 > **Single Source of Truth** for the Get Shit Done methodology.
-> 
+>
 > Model-agnostic. All adapters and extensions reference this file.
 
 ---

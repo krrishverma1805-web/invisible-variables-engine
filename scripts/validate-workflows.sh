@@ -15,27 +15,27 @@ for file in .agent/workflows/*.md; do
     ((workflows_checked++))
     filename=$(basename "$file")
     has_errors=false
-    
+
     # Check for frontmatter
     if ! head -1 "$file" | grep -q "^---"; then
         echo "❌ $filename: Missing frontmatter"
         ((error_count++))
         has_errors=true
     fi
-    
+
     # Check for description
     if ! grep -q "description:" "$file"; then
         echo "❌ $filename: Missing description in frontmatter"
         ((error_count++))
         has_errors=true
     fi
-    
+
     # Check for process tags (optional but recommended)
     if ! grep -q "<process>" "$file"; then
         echo "⚠️  $filename: Missing <process> tag"
         ((warning_count++))
     fi
-    
+
     if [ "$has_errors" = false ]; then
         echo "✅ $filename"
     fi

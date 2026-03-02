@@ -20,8 +20,7 @@ so the WebSocket endpoint can poll ``celery_app.AsyncResult(task_id).info``.
 
 from __future__ import annotations
 
-import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
@@ -36,11 +35,13 @@ log = structlog.get_logger("ive.workers.tasks")
 # Sync DB helper  (uses psycopg2 — safe for Celery sync workers)
 # ---------------------------------------------------------------------------
 
+
 def _get_sync_conn():
     """Return a psycopg2 connection using the sync database URL."""
     import psycopg2
 
     from ive.config import get_settings
+
     settings = get_settings()
     # sync_database_url is "postgresql://..." (not asyncpg)
     dsn = settings.sync_database_url.replace("postgresql+psycopg2://", "postgresql://")
@@ -64,7 +65,7 @@ def _update_experiment(
         current_stage: Pipeline stage name or ``None``.
         error_message: Error string for failed experiments.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     conn = _get_sync_conn()
     try:
         cur = conn.cursor()
@@ -163,6 +164,7 @@ def _get_experiment(experiment_id: str) -> dict[str, Any] | None:
 # Base task class with on_failure hook
 # ---------------------------------------------------------------------------
 
+
 class BaseIVETask(Task):
     """Celery base task that marks experiments as ``failed`` on unhandled errors."""
 
@@ -209,6 +211,7 @@ class BaseIVETask(Task):
 # ---------------------------------------------------------------------------
 # Task 1: run_experiment
 # ---------------------------------------------------------------------------
+
 
 @celery_app.task(
     base=BaseIVETask,
@@ -324,6 +327,7 @@ def run_experiment(
 # Task 2: profile_dataset
 # ---------------------------------------------------------------------------
 
+
 @celery_app.task(
     name="ive.workers.tasks.profile_dataset",
     max_retries=1,
@@ -379,6 +383,7 @@ def profile_dataset(dataset_id: str, file_path: str) -> dict[str, Any]:
 
         # ── Profile ───────────────────────────────────────────────────
         from ive.data.profiler import DataProfiler
+
         profiler = DataProfiler()
         profile = profiler.profile(df, target_column=target_col, dataset_id=dataset_id)
 
@@ -432,6 +437,7 @@ def profile_dataset(dataset_id: str, file_path: str) -> dict[str, Any]:
 # Task 3: cancel_experiment
 # ---------------------------------------------------------------------------
 
+
 @celery_app.task(
     name="ive.workers.tasks.cancel_experiment",
     queue="high_priority",
@@ -464,6 +470,7 @@ def cancel_experiment(task_id: str, experiment_id: str) -> dict[str, Any]:
 # Task 4: health_check_task
 # ---------------------------------------------------------------------------
 
+
 @celery_app.task(
     name="ive.workers.tasks.health_check_task",
     queue="default",
@@ -478,5 +485,5 @@ def health_check_task() -> dict[str, Any]:
     """
     return {
         "status": "worker_healthy",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
     }

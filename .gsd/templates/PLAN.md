@@ -31,12 +31,12 @@ Load these files for context:
   </files>
   <action>
     {Specific implementation instructions}
-    
+
     Steps:
     1. {Step 1}
     2. {Step 2}
     3. {Step 3}
-    
+
     AVOID: {common mistake} because {reason}
     USE: {preferred approach} because {reason}
   </action>

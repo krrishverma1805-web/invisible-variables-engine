@@ -52,9 +52,7 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
           downstream audit logging.
     """
 
-    async def dispatch(
-        self, request: Request, call_next: RequestResponseEndpoint
-    ) -> Response:
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         """Intercept each request and validate the API key if required."""
         path = request.url.path
 
@@ -74,6 +72,7 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
                 key_present=bool(api_key),
             )
             from fastapi.responses import JSONResponse
+
             return JSONResponse(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 content={
@@ -94,6 +93,7 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
 # ---------------------------------------------------------------------------
 # Route-level dependency (alternative to middleware)
 # ---------------------------------------------------------------------------
+
 
 async def require_api_key(request: Request) -> str:
     """FastAPI dependency that extracts and validates the API key.

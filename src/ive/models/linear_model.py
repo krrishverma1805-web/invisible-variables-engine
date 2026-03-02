@@ -82,7 +82,7 @@ class LinearIVEModel(IVEModel):
             return {}
         normalised = coefficients / total
         names = self._feature_names or [f"f{i}" for i in range(len(normalised))]
-        return dict(zip(names, normalised.tolist()))
+        return dict(zip(names, normalised.tolist(), strict=False))
 
     def get_shap_values(self, X: np.ndarray) -> np.ndarray:
         """

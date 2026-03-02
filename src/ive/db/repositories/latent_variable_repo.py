@@ -9,10 +9,10 @@ bulk create helper for the construction phase.
 from __future__ import annotations
 
 import uuid
-from typing import Any, Optional
+from typing import Any
 
 import structlog
-from sqlalchemy import insert, select, update as sa_update
+from sqlalchemy import insert, select
 from sqlalchemy.exc import IntegrityError
 
 from ive.db.models import LatentVariable
@@ -39,19 +39,14 @@ class LatentVariableRepository(BaseRepository[LatentVariable]):
         Returns:
             List of ``LatentVariable`` rows ordered by ``importance_score`` descending.
         """
-        stmt = (
-            select(LatentVariable)
-            .where(LatentVariable.experiment_id == experiment_id)
-        )
+        stmt = select(LatentVariable).where(LatentVariable.experiment_id == experiment_id)
         if status is not None:
             stmt = stmt.where(LatentVariable.status == status)
         stmt = stmt.order_by(LatentVariable.importance_score.desc())
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
-    async def get_validated(
-        self, experiment_id: uuid.UUID
-    ) -> list[LatentVariable]:
+    async def get_validated(self, experiment_id: uuid.UUID) -> list[LatentVariable]:
         """Return only ``status="validated"`` latent variables for an experiment.
 
         Convenience wrapper around :meth:`get_by_experiment` with
@@ -107,6 +102,7 @@ class LatentVariableRepository(BaseRepository[LatentVariable]):
         instance = await self.update(variable_id, **kwargs)
         if instance is None:
             from sqlalchemy.exc import NoResultFound
+
             raise NoResultFound(f"LatentVariable {variable_id} not found")
 
         log.info(
@@ -143,15 +139,18 @@ class LatentVariableRepository(BaseRepository[LatentVariable]):
 
         ids = [uuid.uuid4() for _ in variables]
         rows = [
-            {"id": ids[i], "experiment_id": experiment_id, **var}
-            for i, var in enumerate(variables)
+            {"id": ids[i], "experiment_id": experiment_id, **var} for i, var in enumerate(variables)
         ]
 
         try:
             await self.session.execute(insert(LatentVariable), rows)
             await self.session.flush()
         except IntegrityError as exc:
-            log.error("latent_variable.bulk_create_error", experiment_id=str(experiment_id), error=str(exc))
+            log.error(
+                "latent_variable.bulk_create_error",
+                experiment_id=str(experiment_id),
+                error=str(exc),
+            )
             raise
 
         # Re-fetch in the same session to get fully populated ORM instances

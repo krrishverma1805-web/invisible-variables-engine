@@ -79,16 +79,16 @@ After 3 consecutive failed debug attempts:
 2. **Document** in STATE.md:
    ```markdown
    ## Debug Session
-   
+
    **Problem:** {description}
-   
+
    **Attempts:**
    1. {approach 1} → {result}
    2. {approach 2} → {result}
    3. {approach 3} → {result}
-   
+
    **Hypothesis:** {current theory}
-   
+
    **Recommended next:** {suggested approach}
    ```
 

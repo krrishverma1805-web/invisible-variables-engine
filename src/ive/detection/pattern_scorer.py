@@ -22,17 +22,17 @@ import structlog
 log = structlog.get_logger(__name__)
 
 # Minimum thresholds for a pattern to survive scoring
-_MIN_EFFECT_SIZE = 0.2       # Cohen's d
-_MIN_COVERAGE = 0.03         # Must cover at least 3% of dataset
-_MIN_STABILITY = 0.5         # Must be reproducible across bootstrap resamples
+_MIN_EFFECT_SIZE = 0.2  # Cohen's d
+_MIN_COVERAGE = 0.03  # Must cover at least 3% of dataset
+_MIN_STABILITY = 0.5  # Must be reproducible across bootstrap resamples
 
 
 @dataclass
 class ScoredPattern:
     """A pattern with its final composite score."""
 
-    source: str                          # 'shap' | 'cluster' | 'subgroup'
-    raw_pattern: object                  # Original pattern object
+    source: str  # 'shap' | 'cluster' | 'subgroup'
+    raw_pattern: object  # Original pattern object
     effect_size: float = 0.0
     coverage: float = 0.0
     stability: float = 0.0
@@ -99,7 +99,5 @@ class PatternScorer:
         """Compute the weighted composite score."""
         w = self.WEIGHTS
         return (
-            w["effect_size"] * effect_size
-            + w["stability"] * stability
-            + w["coverage"] * coverage
+            w["effect_size"] * effect_size + w["stability"] * stability + w["coverage"] * coverage
         )

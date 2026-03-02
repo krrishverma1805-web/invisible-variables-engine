@@ -26,24 +26,25 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-
 # ---------------------------------------------------------------------------
 # Metadata helper
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class HiddenVariableSpec:
     """Describes the ground-truth hidden variable for validation."""
 
     name: str
-    rule: str           # human-readable formula
-    formula: str        # Python-evaluable expression using DataFrame columns
+    rule: str  # human-readable formula
+    formula: str  # Python-evaluable expression using DataFrame columns
     effect_size: float  # expected |β| or ΔR²
 
 
 # ---------------------------------------------------------------------------
 # 1. Linear interaction hidden variable
 # ---------------------------------------------------------------------------
+
 
 def create_linear_with_hidden(
     n: int = 1_000,
@@ -71,9 +72,9 @@ def create_linear_with_hidden(
     rng = np.random.default_rng(seed)
     x1 = rng.standard_normal(n)
     x2 = rng.standard_normal(n)
-    x3 = rng.standard_normal(n)                      # pure noise feature
-    cat = rng.choice(["A", "B", "C"], n)             # categorical noise feature
-    hidden = x1 * x2                                  # interaction
+    x3 = rng.standard_normal(n)  # pure noise feature
+    cat = rng.choice(["A", "B", "C"], n)  # categorical noise feature
+    hidden = x1 * x2  # interaction
     eps = rng.standard_normal(n) * 0.5
     y = 2 * x1 + 3 * x2 + 5 * hidden + eps
 
@@ -90,6 +91,7 @@ def create_linear_with_hidden(
 # ---------------------------------------------------------------------------
 # 2. Nonlinear gap — hidden categorical subgroup
 # ---------------------------------------------------------------------------
+
 
 def create_nonlinear_gap(
     n: int = 1_000,
@@ -137,6 +139,7 @@ def create_nonlinear_gap(
 # 3. Temporal drift — concept drift at midpoint
 # ---------------------------------------------------------------------------
 
+
 def create_temporal_drift(
     n: int = 1_000,
     seed: int = 42,
@@ -181,6 +184,7 @@ def create_temporal_drift(
 # 4. Pure random noise — no hidden variable
 # ---------------------------------------------------------------------------
 
+
 def create_random_noise(
     n: int = 1_000,
     seed: int = 42,
@@ -208,7 +212,7 @@ def create_random_noise(
             "x2": rng.standard_normal(n),
             "x3": rng.uniform(0, 10, n),
             "cat": rng.choice(["X", "Y", "Z"], n),
-            "y": rng.standard_normal(n),   # pure noise
+            "y": rng.standard_normal(n),  # pure noise
         }
     )
 
@@ -216,6 +220,7 @@ def create_random_noise(
 # ---------------------------------------------------------------------------
 # 5. Mixed signals — multiple simultaneous hidden variables
 # ---------------------------------------------------------------------------
+
 
 def create_mixed_signals(
     n: int = 2_000,
@@ -272,6 +277,7 @@ def create_mixed_signals(
 # 6. Weak signal — small effect, tests detection sensitivity
 # ---------------------------------------------------------------------------
 
+
 def create_weak_signal(
     n: int = 1_000,
     seed: int = 42,
@@ -303,7 +309,7 @@ def create_weak_signal(
     x3 = rng.standard_normal(n)
     cat = rng.choice(["red", "blue"], n)
     hidden = (x1 > 0).astype(float)
-    eps = rng.standard_normal(n) * 1.0   # relatively large noise
+    eps = rng.standard_normal(n) * 1.0  # relatively large noise
     y = x2 + effect_size * hidden + eps
 
     df = pd.DataFrame({"x1": x1, "x2": x2, "x3": x3, "cat": cat, "y": y})

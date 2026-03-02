@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-import numpy as np
-import pytest
-
 from ive.construction.variable_synthesizer import VariableSynthesizer
-from ive.core.pipeline import LatentVariableCandidate
 
 
 class TestVariableSynthesizer:

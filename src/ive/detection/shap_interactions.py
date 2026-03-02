@@ -22,8 +22,8 @@ log = structlog.get_logger(__name__)
 class SHAPResult:
     """Container for SHAP analysis outputs."""
 
-    shap_values: np.ndarray                   # (n_samples, n_features)
-    shap_interaction_values: np.ndarray | None = None   # (n_samples, n_features, n_features)
+    shap_values: np.ndarray  # (n_samples, n_features)
+    shap_interaction_values: np.ndarray | None = None  # (n_samples, n_features, n_features)
     mean_abs_shap: dict[str, float] = field(default_factory=dict)
     top_interaction_pairs: list[tuple[str, str, float]] = field(default_factory=list)
     feature_names: list[str] = field(default_factory=list)
@@ -46,7 +46,7 @@ class SHAPInteractionAnalyzer:
 
     def compute(
         self,
-        model: object,          # IVEModel instance (XGBoostIVEModel preferred)
+        model: object,  # IVEModel instance (XGBoostIVEModel preferred)
         X: np.ndarray,
         feature_names: list[str],
         compute_interactions: bool = True,
@@ -79,7 +79,7 @@ class SHAPInteractionAnalyzer:
         log.info("ive.shap.compute", n_samples=n, n_features=X.shape[1])
 
         # TODO: Call model.get_shap_values(X_sample)
-        shap_values = np.zeros_like(X_sample)   # placeholder
+        shap_values = np.zeros_like(X_sample)  # placeholder
 
         mean_abs = {
             fname: float(np.mean(np.abs(shap_values[:, i])))

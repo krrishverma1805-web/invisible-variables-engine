@@ -106,7 +106,7 @@ class XGBoostIVEModel(IVEModel):
         if total == 0:
             return {}
         names = self._feature_names or [f"f{i}" for i in range(len(raw))]
-        return dict(zip(names, (raw / total).tolist()))
+        return dict(zip(names, (raw / total).tolist(), strict=False))
 
     def get_shap_values(self, X: np.ndarray) -> np.ndarray:
         """

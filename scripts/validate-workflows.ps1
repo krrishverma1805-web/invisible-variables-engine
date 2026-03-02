@@ -16,27 +16,27 @@ foreach ($file in $workflows) {
     $WorkflowsChecked++
     $content = Get-Content $file.FullName -Raw
     $hasErrors = $false
-    
+
     # Check for frontmatter
     if ($content -notmatch "^---") {
         Write-Host "❌ $($file.Name): Missing frontmatter" -ForegroundColor Red
         $ErrorCount++
         $hasErrors = $true
     }
-    
+
     # Check for description
     if ($content -notmatch "description:") {
         Write-Host "❌ $($file.Name): Missing description in frontmatter" -ForegroundColor Red
         $ErrorCount++
         $hasErrors = $true
     }
-    
+
     # Check for process tags (optional but recommended)
     if ($content -notmatch "<process>") {
         Write-Host "⚠️  $($file.Name): Missing <process> tag" -ForegroundColor Yellow
         $WarningCount++
     }
-    
+
     if (-not $hasErrors) {
         Write-Host "✅ $($file.Name)" -ForegroundColor Green
     }

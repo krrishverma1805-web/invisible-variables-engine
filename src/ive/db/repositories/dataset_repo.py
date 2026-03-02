@@ -10,7 +10,6 @@ and recency ordering.
 from __future__ import annotations
 
 import uuid
-from typing import Optional
 
 import structlog
 from sqlalchemy import desc, select
@@ -25,7 +24,7 @@ log = structlog.get_logger(__name__)
 class DatasetRepository(BaseRepository[Dataset]):
     """Dataset-specific query methods on top of :class:`BaseRepository`."""
 
-    async def get_by_checksum(self, checksum: str) -> Optional[Dataset]:
+    async def get_by_checksum(self, checksum: str) -> Dataset | None:
         """Fetch a dataset by its SHA-256 file checksum.
 
         Used to detect duplicate uploads before persisting the file.
@@ -36,15 +35,13 @@ class DatasetRepository(BaseRepository[Dataset]):
         Returns:
             Existing ``Dataset`` row if found, ``None`` otherwise.
         """
-        result = await self.session.execute(
-            select(Dataset).where(Dataset.checksum == checksum)
-        )
+        result = await self.session.execute(select(Dataset).where(Dataset.checksum == checksum))
         dataset = result.scalar_one_or_none()
         if dataset:
             log.debug("dataset.duplicate_found", checksum=checksum[:8] + "...", id=str(dataset.id))
         return dataset
 
-    async def get_with_experiments(self, dataset_id: uuid.UUID) -> Optional[Dataset]:
+    async def get_with_experiments(self, dataset_id: uuid.UUID) -> Dataset | None:
         """Fetch a dataset and eagerly load its ``experiments`` relationship.
 
         Using ``selectinload`` avoids the N+1 problem by issuing a single
@@ -89,9 +86,6 @@ class DatasetRepository(BaseRepository[Dataset]):
         """
         pattern = f"%{query}%"
         result = await self.session.execute(
-            select(Dataset)
-            .where(Dataset.name.ilike(pattern))
-            .order_by(Dataset.name)
-            .limit(limit)
+            select(Dataset).where(Dataset.name.ilike(pattern)).order_by(Dataset.name).limit(limit)
         )
         return list(result.scalars().all())

@@ -109,6 +109,7 @@ async def cancel_experiment(
 
 from fastapi import Response, status
 
+
 @router.delete(
     "/{experiment_id}",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -118,7 +119,7 @@ async def delete_experiment(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete experiment. Returns 204 on success."""
-    
+
     repo = ExperimentRepository(db)
     experiment = await repo.get_by_id(experiment_id)
 

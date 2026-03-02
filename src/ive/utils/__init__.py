@@ -1,5 +1,5 @@
 """Utilities package."""
 
-from ive.utils.logging import setup_logging, get_logger
+from ive.utils.logging import get_logger, setup_logging
 
 __all__ = ["setup_logging", "get_logger"]

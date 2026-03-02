@@ -15,7 +15,7 @@ Usage::
 from __future__ import annotations
 
 import uuid
-from typing import Any, Generic, Optional, Type, TypeVar
+from typing import Any, Generic, TypeVar
 
 import structlog
 from sqlalchemy import func, select
@@ -42,7 +42,7 @@ class BaseRepository(Generic[ModelType]):
         model_class: The SQLAlchemy model class (e.g. ``Dataset``).
     """
 
-    def __init__(self, session: AsyncSession, model_class: Type[ModelType]) -> None:
+    def __init__(self, session: AsyncSession, model_class: type[ModelType]) -> None:
         self.session = session
         self.model_class = model_class
         self._log = log.bind(repo=self.__class__.__name__, model=model_class.__name__)
@@ -77,7 +77,7 @@ class BaseRepository(Generic[ModelType]):
     # Read
     # ------------------------------------------------------------------
 
-    async def get_by_id(self, id: uuid.UUID) -> Optional[ModelType]:
+    async def get_by_id(self, id: uuid.UUID) -> ModelType | None:
         """Fetch a single row by primary key.
 
         Args:
@@ -136,7 +136,7 @@ class BaseRepository(Generic[ModelType]):
     # Update
     # ------------------------------------------------------------------
 
-    async def update(self, id: uuid.UUID, **kwargs: Any) -> Optional[ModelType]:
+    async def update(self, id: uuid.UUID, **kwargs: Any) -> ModelType | None:
         """Update columns on an existing row.
 
         Only the provided keyword arguments are updated; other columns
@@ -212,8 +212,6 @@ class BaseRepository(Generic[ModelType]):
         Returns:
             ``True`` if the row exists.
         """
-        stmt = select(func.count()).select_from(self.model_class).where(
-            self.model_class.id == id
-        )
+        stmt = select(func.count()).select_from(self.model_class).where(self.model_class.id == id)
         result = await self.session.execute(stmt)
         return result.scalar_one() > 0

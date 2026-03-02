@@ -32,7 +32,7 @@ class BootstrapResult:
     ci_lower: float = 0.0
     ci_upper: float = 0.0
     p_value: float = 1.0
-    stability_score: float = 0.0          # Fraction of resamples recovering pattern
+    stability_score: float = 0.0  # Fraction of resamples recovering pattern
     n_iterations: int = 1000
 
 

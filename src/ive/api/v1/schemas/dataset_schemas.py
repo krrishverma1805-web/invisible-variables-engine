@@ -15,17 +15,17 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
 # ---------------------------------------------------------------------------
 # Column-level info (part of dataset detail response)
 # ---------------------------------------------------------------------------
+
 
 class ColumnInfo(BaseModel):
     """Compact per-column metadata returned in the dataset detail response."""
 
     name: str
-    detected_type: str       # "numeric" | "categorical" | "datetime" | "boolean" | "text" | "id"
-    dtype: str               # original pandas dtype string, e.g. "float64"
+    detected_type: str  # "numeric" | "categorical" | "datetime" | "boolean" | "text" | "id"
+    dtype: str  # original pandas dtype string, e.g. "float64"
     null_pct: float
     unique_count: int
     sample_values: list[Any] = Field(default_factory=list)
@@ -34,6 +34,7 @@ class ColumnInfo(BaseModel):
 # ---------------------------------------------------------------------------
 # Core dataset response
 # ---------------------------------------------------------------------------
+
 
 class DatasetResponse(BaseModel):
     """Full dataset metadata returned by upload, detail, and list endpoints."""
@@ -54,7 +55,7 @@ class DatasetResponse(BaseModel):
     created_at: datetime
 
     @classmethod
-    def from_dataset(cls, ds: Any) -> "DatasetResponse":
+    def from_dataset(cls, ds: Any) -> DatasetResponse:
         """Construct from a ``Dataset`` ORM instance.
 
         Extracts ``columns`` and ``quality_score`` from ``schema_json``.
@@ -92,6 +93,7 @@ class DatasetResponse(BaseModel):
 # List response
 # ---------------------------------------------------------------------------
 
+
 class DatasetListResponse(BaseModel):
     """Paginated list of datasets."""
 
@@ -104,6 +106,7 @@ class DatasetListResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Profile response
 # ---------------------------------------------------------------------------
+
 
 class DatasetProfileResponse(BaseModel):
     """Statistical profile returned by ``GET /datasets/{id}/profile``."""
@@ -123,6 +126,7 @@ class DatasetProfileResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Delete response
 # ---------------------------------------------------------------------------
+
 
 class DeleteResponse(BaseModel):
     """Acknowledgment returned after a successful delete."""

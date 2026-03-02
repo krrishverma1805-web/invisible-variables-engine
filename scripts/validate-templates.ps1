@@ -16,26 +16,26 @@ foreach ($file in $templates) {
     $TemplatesChecked++
     $content = Get-Content $file.FullName -Raw
     $hasErrors = $false
-    
+
     # Check for title (# heading)
     if ($content -notmatch "^# ") {
         Write-Host "❌ $($file.Name): Missing title (# heading)" -ForegroundColor Red
         $ErrorCount++
         $hasErrors = $true
     }
-    
+
     # Check for Last updated marker
     if ($content -notmatch "Last updated") {
         Write-Host "⚠️  $($file.Name): Missing 'Last updated' marker" -ForegroundColor Yellow
         $WarningCount++
     }
-    
+
     # Check minimum length (templates should have substance)
     if ($content.Length -lt 200) {
         Write-Host "⚠️  $($file.Name): Very short template (<200 chars)" -ForegroundColor Yellow
         $WarningCount++
     }
-    
+
     if (-not $hasErrors) {
         Write-Host "✅ $($file.Name)" -ForegroundColor Green
     }

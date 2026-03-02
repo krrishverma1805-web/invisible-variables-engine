@@ -7,13 +7,7 @@ to verify that each phase receives and produces correct data.
 
 from __future__ import annotations
 
-import uuid
-
-import numpy as np
 import pytest
-import pytest_asyncio
-
-from tests.fixtures.synthetic_datasets import make_regression_with_latent
 
 
 @pytest.mark.integration
@@ -30,8 +24,6 @@ async def test_pipeline_context_populated_after_phases(tmp_path) -> None:
         - Assert len(result.latent_variables) >= 0
         - Assert result.elapsed_seconds > 0
     """
-    from ive.core.engine import IVEEngine
-    from ive.api.v1.schemas.experiment_schemas import ExperimentConfig
 
     pytest.skip("Phases not yet implemented — skipping until core logic added")
 

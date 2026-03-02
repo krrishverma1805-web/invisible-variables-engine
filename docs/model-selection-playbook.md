@@ -1,7 +1,7 @@
 # Model Selection Playbook
 
 > Guidance for choosing models by phase and task type.
-> 
+>
 > **No model is required.** These are recommendations, not requirements.
 
 ---

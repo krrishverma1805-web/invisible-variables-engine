@@ -15,8 +15,8 @@ since ``models.py`` needs ``Base`` and ``database.py`` needs the config.
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
 import structlog
 from sqlalchemy import MetaData

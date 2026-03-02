@@ -1,7 +1,7 @@
 # GSD Methodology — Mission Control Rules
 
 > **Get Shit Done**: A spec-driven, context-engineered development methodology.
-> 
+>
 > These rules enforce disciplined, high-quality autonomous development.
 
 ---
@@ -64,4 +64,3 @@ Key recommendations:
 *GSD Methodology adapted for Google Antigravity*
 *Canonical rules: [PROJECT_RULES.md](../PROJECT_RULES.md)*
 *Source: https://github.com/glittercowboy/get-shit-done*
-

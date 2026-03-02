@@ -26,7 +26,7 @@ if st.button("🔄 Load Results") and experiment_id:
                 "coverage_pct": 23.5,
                 "candidate_features": ["zip_code", "avg_commute_mins"],
                 "explanation": "The model consistently under-estimates for samples where "
-                               "neighbourhood quality (proxied by zip_code and commute time) is high.",
+                "neighbourhood quality (proxied by zip_code and commute time) is high.",
                 "validation": {"bootstrap_stability": 0.91, "p_value": 0.0012},
             }
         ]  # placeholder
@@ -35,7 +35,10 @@ if st.button("🔄 Load Results") and experiment_id:
             st.warning("No latent variables found for this experiment.")
         else:
             for lv in lvs:
-                with st.expander(f"#{lv['rank']} — {lv['name']} (confidence: {lv['confidence_score']:.2f})", expanded=lv["rank"] == 1):
+                with st.expander(
+                    f"#{lv['rank']} — {lv['name']} (confidence: {lv['confidence_score']:.2f})",
+                    expanded=lv["rank"] == 1,
+                ):
                     col1, col2, col3 = st.columns(3)
                     col1.metric("Confidence", f"{lv['confidence_score']:.2f}")
                     col2.metric("Effect Size (d)", f"{lv['effect_size']:.2f}")

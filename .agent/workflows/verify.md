@@ -111,7 +111,7 @@ verdict: PASS | FAIL | PARTIAL
 
 ### ✅ {Must-have 1}
 **Status:** PASS
-**Evidence:** 
+**Evidence:**
 ```
 {command output or description}
 ```

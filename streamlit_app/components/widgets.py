@@ -43,16 +43,16 @@ def paginator(items: list[Any], page_size: int = 10) -> list[Any]:
     n_pages = max(1, (total + page_size - 1) // page_size)
     page = st.number_input("Page", min_value=1, max_value=n_pages, value=1, step=1)
     start = (page - 1) * page_size
-    return items[start: start + page_size]
+    return items[start : start + page_size]
 
 
 def experiment_status_chip(status: str) -> None:
     """Display a coloured status indicator for an experiment."""
     colours = {
-        "queued":    "🔵",
-        "running":   "🟡",
+        "queued": "🔵",
+        "running": "🟡",
         "completed": "🟢",
-        "failed":    "🔴",
+        "failed": "🔴",
         "cancelled": "⚫",
     }
     icon = colours.get(status, "⚪")

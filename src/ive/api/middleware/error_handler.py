@@ -21,7 +21,6 @@ Response envelope (all errors)::
 from __future__ import annotations
 
 import traceback
-import uuid
 
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -38,6 +37,7 @@ log = get_logger(__name__)
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _request_id(request: Request) -> str | None:
     """Extract request ID from state (set by RequestIDMiddleware)."""
@@ -67,6 +67,7 @@ def _make_error(
 # ---------------------------------------------------------------------------
 # Public registration
 # ---------------------------------------------------------------------------
+
 
 def register_exception_handlers(app: FastAPI) -> None:
     """Attach all application-level exception handlers to *app*.
@@ -115,9 +116,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     # ── 2. Standard HTTP errors ────────────────────────────────────────────
 
     @app.exception_handler(StarletteHTTPException)
-    async def http_error_handler(
-        request: Request, exc: StarletteHTTPException
-    ) -> JSONResponse:
+    async def http_error_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
         """Handle standard HTTP exceptions (4xx / 5xx)."""
         rid = _request_id(request)
         code_map = {
@@ -149,9 +148,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     # ── 3. DatasetValidationError ──────────────────────────────────────────
 
     @app.exception_handler(_get_dataset_validation_error())
-    async def dataset_validation_handler(
-        request: Request, exc: Exception
-    ) -> JSONResponse:
+    async def dataset_validation_handler(request: Request, exc: Exception) -> JSONResponse:
         """Return 422 with a list of dataset-specific validation errors."""
         rid = _request_id(request)
         errors = getattr(exc, "errors", [str(exc)])
@@ -167,9 +164,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     # ── 4. ValueError ──────────────────────────────────────────────────────
 
     @app.exception_handler(ValueError)
-    async def value_error_handler(
-        request: Request, exc: ValueError
-    ) -> JSONResponse:
+    async def value_error_handler(request: Request, exc: ValueError) -> JSONResponse:
         """Handle ValueError as 400 Bad Request."""
         rid = _request_id(request)
         log.warning("ive.value_error", error=str(exc), path=request.url.path, request_id=rid)
@@ -183,9 +178,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     # ── 5. FileNotFoundError ───────────────────────────────────────────────
 
     @app.exception_handler(FileNotFoundError)
-    async def file_not_found_handler(
-        request: Request, exc: FileNotFoundError
-    ) -> JSONResponse:
+    async def file_not_found_handler(request: Request, exc: FileNotFoundError) -> JSONResponse:
         """Handle FileNotFoundError as 404."""
         rid = _request_id(request)
         log.warning("ive.file_not_found", error=str(exc), path=request.url.path, request_id=rid)
@@ -199,9 +192,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     # ── 6. SQLAlchemy errors ───────────────────────────────────────────────
 
     @app.exception_handler(SQLAlchemyError)
-    async def sqlalchemy_error_handler(
-        request: Request, exc: SQLAlchemyError
-    ) -> JSONResponse:
+    async def sqlalchemy_error_handler(request: Request, exc: SQLAlchemyError) -> JSONResponse:
         """Handle database errors — never leak internal details in production."""
         rid = _request_id(request)
         log.error(
@@ -213,7 +204,8 @@ def register_exception_handlers(app: FastAPI) -> None:
         )
         settings = get_settings()
         message = (
-            str(exc) if settings.is_development
+            str(exc)
+            if settings.is_development
             else "A database error occurred. Please try again later."
         )
         return _make_error(
@@ -226,9 +218,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     # ── 7. Catch-all ───────────────────────────────────────────────────────
 
     @app.exception_handler(Exception)
-    async def unhandled_error_handler(
-        request: Request, exc: Exception
-    ) -> JSONResponse:
+    async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
         """Catch-all for unexpected exceptions."""
         rid = _request_id(request)
         log.error(
@@ -240,7 +230,8 @@ def register_exception_handlers(app: FastAPI) -> None:
         )
         settings = get_settings()
         message = (
-            str(exc) if settings.is_development
+            str(exc)
+            if settings.is_development
             else "An internal server error occurred. Please try again later."
         )
         return _make_error(
@@ -255,9 +246,11 @@ def _get_dataset_validation_error() -> type:
     """Lazily import DatasetValidationError to avoid circular imports."""
     try:
         from ive.data.ingestion import DatasetValidationError
+
         return DatasetValidationError
     except ImportError:
         # Fallback: a dummy class that will never match
         class _Dummy(Exception):
             pass
+
         return _Dummy

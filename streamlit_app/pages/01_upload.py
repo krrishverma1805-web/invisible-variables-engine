@@ -26,7 +26,11 @@ with col2:
 
 description = st.text_area("Description (optional)", height=80)
 
-if st.button("🚀 Upload & Profile", type="primary", disabled=not uploaded_file or not dataset_name or not target_column):
+if st.button(
+    "🚀 Upload & Profile",
+    type="primary",
+    disabled=not uploaded_file or not dataset_name or not target_column,
+):
     with st.spinner("Uploading and queuing profiling task..."):
         # TODO: POST to /api/v1/datasets with multipart form
         # import httpx

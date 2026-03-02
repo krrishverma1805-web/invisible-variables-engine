@@ -11,7 +11,7 @@ Routes:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
@@ -47,7 +47,7 @@ async def health_check() -> JSONResponse:
             "status": "healthy",
             "service": _SERVICE,
             "version": _VERSION,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         },
     )
 
@@ -89,6 +89,7 @@ async def readiness_check(
         import redis.asyncio as aioredis
 
         from ive.config import get_settings
+
         settings = get_settings()
         r = aioredis.from_url(settings.redis_url, socket_connect_timeout=2)
         await r.ping()
@@ -113,6 +114,6 @@ async def readiness_check(
         content={
             "status": "ready" if all_healthy else "not_ready",
             "checks": checks,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         },
     )

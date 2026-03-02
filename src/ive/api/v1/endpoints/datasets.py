@@ -19,7 +19,6 @@ from uuid import UUID
 
 import pandas as pd
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
-from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ive.api.v1.dependencies import get_db, get_pagination
@@ -27,9 +26,7 @@ from ive.api.v1.schemas.dataset_schemas import (
     DatasetListResponse,
     DatasetProfileResponse,
     DatasetResponse,
-    DeleteResponse,
 )
-from ive.config import get_settings
 from ive.data.ingestion import DataIngestionService, DatasetValidationError
 from ive.data.profiler import DataProfiler
 from ive.db.models import Dataset
@@ -48,6 +45,7 @@ _MAX_BYTES = 500 * 1024 * 1024  # 500 MB
 # POST /datasets/ — Upload dataset
 # ---------------------------------------------------------------------------
 
+
 @router.post(
     "/",
     status_code=status.HTTP_201_CREATED,
@@ -62,7 +60,9 @@ _MAX_BYTES = 500 * 1024 * 1024  # 500 MB
 async def upload_dataset(
     file: UploadFile = File(..., description="CSV file to upload"),
     target_column: str = Form(..., description="Name of the target / label column"),
-    time_column: str | None = Form(None, description="Optional datetime column for temporal analysis"),
+    time_column: str | None = Form(
+        None, description="Optional datetime column for temporal analysis"
+    ),
     name: str | None = Form(None, description="Optional display name (defaults to filename)"),
     db: AsyncSession = Depends(get_db),
 ) -> DatasetResponse:
@@ -123,6 +123,7 @@ async def upload_dataset(
     try:
         # Re-parse for profiling (ingestion result holds column type info)
         import csv as _csv
+
         text_data = file_content.decode("utf-8", errors="replace")
         delimiter = ","
         try:
@@ -145,13 +146,9 @@ async def upload_dataset(
         repo = DatasetRepository(db, Dataset)
         existing_schema = result.schema_json.copy()
         existing_schema["quality_score"] = profile.quality_score
-        existing_schema["quality_issues"] = [
-            qi.model_dump() for qi in profile.quality_issues
-        ]
+        existing_schema["quality_issues"] = [qi.model_dump() for qi in profile.quality_issues]
         existing_schema["recommendations"] = profile.recommendations
-        existing_schema["top_correlations"] = [
-            cp.model_dump() for cp in profile.top_correlations
-        ]
+        existing_schema["top_correlations"] = [cp.model_dump() for cp in profile.top_correlations]
         await repo.update(
             id=_parse_uuid(result.dataset_id),
             schema_json=existing_schema,
@@ -180,6 +177,7 @@ async def upload_dataset(
 # ---------------------------------------------------------------------------
 # GET /datasets/ — List datasets
 # ---------------------------------------------------------------------------
+
 
 @router.get(
     "/",
@@ -216,6 +214,7 @@ async def list_datasets(
 # GET /datasets/{dataset_id} — Dataset detail
 # ---------------------------------------------------------------------------
 
+
 @router.get(
     "/{dataset_id}",
     response_model=DatasetResponse,
@@ -244,6 +243,7 @@ async def get_dataset(
 
 from fastapi import Response, status
 
+
 @router.delete(
     "/{dataset_id}",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -258,7 +258,7 @@ async def delete_dataset(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete dataset and its artifact file. Returns 204 on success."""
-    
+
     log.info("datasets.delete", dataset_id=str(dataset_id))
 
     repo = DatasetRepository(db, Dataset)
@@ -289,9 +289,11 @@ async def delete_dataset(
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
+
 # ---------------------------------------------------------------------------
 # GET /datasets/{dataset_id}/profile — Statistical profile
 # ---------------------------------------------------------------------------
+
 
 @router.get(
     "/{dataset_id}/profile",
@@ -344,6 +346,7 @@ async def get_dataset_profile(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _parse_uuid(value: str | UUID) -> UUID:
     """Coerce a string or UUID to ``uuid.UUID``."""

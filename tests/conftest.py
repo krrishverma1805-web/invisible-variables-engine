@@ -8,17 +8,16 @@ All fixtures are function-scoped (default) for test isolation.
 from __future__ import annotations
 
 import io
-import tempfile
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import numpy as np
 import pandas as pd
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Custom pytest markers
 # ---------------------------------------------------------------------------
+
 
 def pytest_configure(config):  # noqa: D401
     """Register custom marks used throughout the test suite."""
@@ -30,6 +29,7 @@ def pytest_configure(config):  # noqa: D401
 # ---------------------------------------------------------------------------
 # DataFrames
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def sample_regression_df() -> pd.DataFrame:
@@ -75,7 +75,7 @@ def sample_large_df() -> pd.DataFrame:
     n = 1_000
     x1 = rng.standard_normal(n)
     x2 = rng.standard_normal(n)
-    x3 = x1 * 0.97 + rng.standard_normal(n) * 0.1   # highly correlated with x1
+    x3 = x1 * 0.97 + rng.standard_normal(n) * 0.1  # highly correlated with x1
     return pd.DataFrame(
         {
             "x1": x1,
@@ -90,6 +90,7 @@ def sample_large_df() -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # CSV bytes helpers
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def sample_csv_bytes(sample_regression_df: pd.DataFrame) -> bytes:
@@ -141,6 +142,7 @@ def minimal_valid_csv() -> bytes:
 # Filesystem
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def temp_dir(tmp_path):
     """Temporary directory (delegates to pytest's ``tmp_path``)."""
@@ -150,6 +152,7 @@ def temp_dir(tmp_path):
 # ---------------------------------------------------------------------------
 # Mock DB session
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def mock_db_session():
@@ -167,7 +170,7 @@ def mock_db_session():
 
     # execute() returns a result that supports scalar_one_or_none()
     exec_result = MagicMock()
-    exec_result.scalar_one_or_none.return_value = None   # no duplicate found
+    exec_result.scalar_one_or_none.return_value = None  # no duplicate found
     session.execute = AsyncMock(return_value=exec_result)
     return session
 
@@ -175,6 +178,7 @@ def mock_db_session():
 # ---------------------------------------------------------------------------
 # Mock artifact store
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def mock_artifact_store():

@@ -32,7 +32,7 @@ git status --short
 
 **PowerShell:**
 ```powershell
-Get-ChildItem -Recurse -Directory | 
+Get-ChildItem -Recurse -Directory |
     Where-Object { $_.Name -notmatch "node_modules|\.git" }
 ```
 

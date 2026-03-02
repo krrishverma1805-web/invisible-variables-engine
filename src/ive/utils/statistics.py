@@ -123,7 +123,9 @@ def confidence_interval_bootstrap(
         for _ in range(n_bootstrap)
     ]
     arr = np.array(stats)
-    return float(np.percentile(arr, 100 * alpha / 2)), float(np.percentile(arr, 100 * (1 - alpha / 2)))
+    return float(np.percentile(arr, 100 * alpha / 2)), float(
+        np.percentile(arr, 100 * (1 - alpha / 2))
+    )
 
 
 def normalise_scores(scores: np.ndarray) -> np.ndarray:

@@ -21,15 +21,15 @@ auto_refresh = st.checkbox("Auto-refresh every 5 seconds", value=False)
 PHASES = ["understand", "model", "detect", "construct"]
 PHASE_LABELS = {
     "understand": "Phase 1 — Understand",
-    "model":      "Phase 2 — Model",
-    "detect":     "Phase 3 — Detect",
-    "construct":  "Phase 4 — Construct",
+    "model": "Phase 2 — Model",
+    "detect": "Phase 3 — Detect",
+    "construct": "Phase 4 — Construct",
 }
 
 if experiment_id:
     st.markdown("---")
     # TODO: GET /api/v1/experiments/{experiment_id} and update these placeholders
-    status = "running"     # placeholder
+    status = "running"  # placeholder
     current_phase = "model"  # placeholder
 
     st.metric("Status", status.upper())

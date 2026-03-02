@@ -31,7 +31,7 @@ class ResidualAnalysis:
     skewness: float = 0.0
     kurtosis: float = 0.0
     max_abs: float = 0.0
-    pct_large: float = 0.0           # % of |residual| > 2*std
+    pct_large: float = 0.0  # % of |residual| > 2*std
     heteroscedastic: bool = False
     breusch_pagan_p: float | None = None
     normal: bool = False
@@ -85,9 +85,7 @@ class ResidualAnalyzer:
         analysis.skewness = float(stats.skew(residuals))
         analysis.kurtosis = float(stats.kurtosis(residuals))
         analysis.max_abs = float(np.max(np.abs(residuals)))
-        analysis.pct_large = float(
-            np.mean(np.abs(residuals) > self.threshold * analysis.std) * 100
-        )
+        analysis.pct_large = float(np.mean(np.abs(residuals) > self.threshold * analysis.std) * 100)
 
         # TODO: Normality test (Shapiro-Wilk)
         # sample = residuals[:5000] if len(residuals) > 5000 else residuals

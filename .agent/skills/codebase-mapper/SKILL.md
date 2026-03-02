@@ -85,7 +85,7 @@ Get-ChildItem "*.csproj"
 
 ```powershell
 # Get directory structure
-Get-ChildItem -Recurse -Directory | 
+Get-ChildItem -Recurse -Directory |
     Where-Object { $_.Name -notmatch "node_modules|\.git|__pycache__|dist|build|\.next" } |
     Select-Object FullName
 ```

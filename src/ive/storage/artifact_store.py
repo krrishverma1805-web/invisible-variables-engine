@@ -46,7 +46,6 @@ from __future__ import annotations
 
 import hashlib
 import io
-import os
 import pickle
 import re
 import uuid
@@ -70,6 +69,7 @@ _MAX_FILE_SIZE_BYTES: int = 500 * 1024 * 1024  # 500 MB
 # ---------------------------------------------------------------------------
 # Helper functions
 # ---------------------------------------------------------------------------
+
 
 def compute_checksum(file_content: bytes) -> str:
     """Compute a SHA-256 hex digest of ``file_content``.
@@ -161,6 +161,7 @@ def _resolve_path_parts(
 # ---------------------------------------------------------------------------
 # Abstract base class
 # ---------------------------------------------------------------------------
+
 
 class ArtifactStore(ABC):
     """Abstract async interface for persistent artefact storage.
@@ -283,6 +284,7 @@ class ArtifactStore(ABC):
         def _default(obj: object) -> object:
             import uuid as _uuid
             from datetime import date, datetime
+
             if isinstance(obj, (datetime, date)):
                 return obj.isoformat()
             if isinstance(obj, _uuid.UUID):
@@ -308,6 +310,7 @@ class ArtifactStore(ABC):
             Deserialised Python object.
         """
         import json
+
         raw = await self.load_file(path)
         return json.loads(raw.decode("utf-8"))
 
@@ -408,6 +411,7 @@ class ArtifactStore(ABC):
 # Local filesystem implementation
 # ---------------------------------------------------------------------------
 
+
 class LocalArtifactStore(ArtifactStore):
     """Async filesystem-backed artefact store using ``aiofiles``.
 
@@ -446,9 +450,7 @@ class LocalArtifactStore(ArtifactStore):
         safe = logical_path.lstrip("/").replace("..", "")
         resolved = (self.base_dir / safe).resolve()
         if not str(resolved).startswith(str(self.base_dir)):
-            raise ValueError(
-                f"Path traversal detected: logical_path={logical_path!r}"
-            )
+            raise ValueError(f"Path traversal detected: logical_path={logical_path!r}")
         return resolved
 
     def _validate_size(self, data: bytes) -> None:
@@ -471,8 +473,7 @@ class LocalArtifactStore(ArtifactStore):
             import aiofiles
         except ImportError as exc:
             raise ImportError(
-                "aiofiles is required.  Add it to pyproject.toml: "
-                "poetry add aiofiles"
+                "aiofiles is required.  Add it to pyproject.toml: " "poetry add aiofiles"
             ) from exc
 
         # Materialise BinaryIO to bytes
@@ -546,6 +547,7 @@ class LocalArtifactStore(ArtifactStore):
 # ---------------------------------------------------------------------------
 # S3 implementation (stub — ready for aiobotocore in production)
 # ---------------------------------------------------------------------------
+
 
 class S3ArtifactStore(ArtifactStore):
     """AWS S3-backed artefact store using ``aiobotocore``.
@@ -652,6 +654,7 @@ class S3ArtifactStore(ArtifactStore):
 # Factory
 # ---------------------------------------------------------------------------
 
+
 def get_artifact_store() -> ArtifactStore:
     """Return the configured ``ArtifactStore`` for this process.
 
@@ -675,9 +678,7 @@ def get_artifact_store() -> ArtifactStore:
 
     if settings.artifact_store_type == "s3":
         if not settings.s3_bucket_name:
-            raise ValueError(
-                "S3_BUCKET_NAME must be configured when ARTIFACT_STORE_TYPE=s3"
-            )
+            raise ValueError("S3_BUCKET_NAME must be configured when ARTIFACT_STORE_TYPE=s3")
         secret = settings.aws_secret_access_key.get_secret_value()
         return S3ArtifactStore(
             bucket=settings.s3_bucket_name,

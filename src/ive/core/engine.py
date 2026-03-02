@@ -18,11 +18,11 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-from ive.core.pipeline import EngineResult, PipelineContext
-from ive.core.phase_understand import PhaseUnderstand
-from ive.core.phase_model import PhaseModel
-from ive.core.phase_detect import PhaseDetect
 from ive.core.phase_construct import PhaseConstruct
+from ive.core.phase_detect import PhaseDetect
+from ive.core.phase_model import PhaseModel
+from ive.core.phase_understand import PhaseUnderstand
+from ive.core.pipeline import EngineResult, PipelineContext
 
 if TYPE_CHECKING:
     from ive.api.v1.schemas.experiment_schemas import ExperimentConfig
@@ -54,7 +54,7 @@ class IVEEngine:
     async def run(
         self,
         experiment_id: uuid.UUID,
-        config: "ExperimentConfig",
+        config: ExperimentConfig,
         data_path: str,
     ) -> EngineResult:
         """

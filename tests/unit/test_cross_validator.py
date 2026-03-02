@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from ive.models.cross_validator import CrossValidator, CVResult
 from ive.models.linear_model import LinearIVEModel
