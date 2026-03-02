@@ -1,170 +1,186 @@
 """
-Pytest Configuration and Shared Fixtures.
+Shared pytest fixtures for Invisible Variables Engine tests.
 
-Provides fixtures used across all test modules:
-    - Synthetic DataFrame generators for various dataset shapes
-    - Pre-built PipelineContext instances for phase testing
-    - AsyncSession mocks for DB layer testing
-    - TestClient for FastAPI endpoint testing
-    - Fake ArtifactStore backed by tmp_path
+Provides lightweight, DB/Redis-free fixtures for unit testing.
+All fixtures are function-scoped (default) for test isolation.
 """
 
 from __future__ import annotations
 
-import asyncio
-import uuid
-from typing import AsyncGenerator, Generator
+import io
+import tempfile
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 import pandas as pd
 import pytest
-import pytest_asyncio
-from fastapi.testclient import TestClient
-from httpx import AsyncClient
-
-# ---------------------------------------------------------------------------
-# Pytest asyncio configuration
-# ---------------------------------------------------------------------------
-# All async tests use the same event loop per session
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create a session-scoped event loop for async tests."""
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
 
 
 # ---------------------------------------------------------------------------
-# Settings override — use test values for all tests
+# Custom pytest markers
 # ---------------------------------------------------------------------------
-@pytest.fixture(autouse=True)
-def override_settings(monkeypatch, tmp_path):
-    """Override settings with safe test values before each test."""
-    monkeypatch.setenv("ENV", "development")
-    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32chars-minimum-x")
-    monkeypatch.setenv("VALID_API_KEYS", "test-api-key")
-    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://ive:ive@localhost:5432/ive_test")
-    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/15")
-    monkeypatch.setenv("ARTIFACT_BASE_DIR", str(tmp_path / "artifacts"))
-    monkeypatch.setenv("ARTIFACT_STORE_TYPE", "local")
 
-    # Clear the cached settings so the monkeypatched env is used
-    from ive.config import get_settings
-    get_settings.cache_clear()
-    yield
-    get_settings.cache_clear()
+def pytest_configure(config):  # noqa: D401
+    """Register custom marks used throughout the test suite."""
+    config.addinivalue_line("markers", "unit: fast, in-process unit tests (no DB/Redis)")
+    config.addinivalue_line("markers", "integration: tests that require Docker services")
+    config.addinivalue_line("markers", "statistical: property-based / numerical accuracy tests")
 
 
 # ---------------------------------------------------------------------------
-# Synthetic DataFrame fixtures
+# DataFrames
 # ---------------------------------------------------------------------------
+
 @pytest.fixture
-def simple_regression_df() -> pd.DataFrame:
-    """
-    Small (200 × 5) regression dataset with a known latent variable.
+def sample_regression_df() -> pd.DataFrame:
+    """500-row regression DataFrame with known feature→target relationships.
 
-    y = 2*x1 + 3*x2 + hidden_group_effect + noise
-    where hidden_group_effect depends on a binary latent variable.
+    Relationship: price ≈ 50,000 + 5,000·feature_a + 100·feature_b + noise
     """
     rng = np.random.default_rng(42)
-    n = 200
-    x1 = rng.normal(0, 1, n)
-    x2 = rng.normal(0, 1, n)
-    latent = (rng.integers(0, 2, n) * 5).astype(float)  # hidden: 0 or 5
-    noise = rng.normal(0, 0.5, n)
-    y = 2 * x1 + 3 * x2 + latent + noise
-
-    return pd.DataFrame({"x1": x1, "x2": x2, "y": y})
+    n = 500
+    feature_a = rng.standard_normal(n)
+    feature_b = rng.uniform(0, 100, n)
+    noise = rng.standard_normal(n) * 1000
+    df = pd.DataFrame(
+        {
+            "feature_a": feature_a,
+            "feature_b": feature_b,
+            "category": rng.choice(["cat_1", "cat_2", "cat_3"], n),
+            "price": 50_000 + 5_000 * feature_a + 100 * feature_b + noise,
+        }
+    )
+    return df
 
 
 @pytest.fixture
-def large_regression_df() -> pd.DataFrame:
-    """
-    Larger (2000 × 10) regression dataset for performance tests.
-    """
+def sample_classification_df() -> pd.DataFrame:
+    """500-row binary classification DataFrame (70/30 split)."""
+    rng = np.random.default_rng(42)
+    n = 500
+    return pd.DataFrame(
+        {
+            "age": rng.integers(18, 80, n),
+            "income": rng.normal(50_000, 20_000, n),
+            "category": rng.choice(["A", "B", "C"], n),
+            "target": rng.choice([0, 1], n, p=[0.7, 0.3]),
+        }
+    )
+
+
+@pytest.fixture
+def sample_large_df() -> pd.DataFrame:
+    """1,000-row dataset suitable for correlation and profiling tests."""
     rng = np.random.default_rng(0)
-    n = 2000
-    X = rng.normal(0, 1, (n, 9))
-    y = X[:, 0] * 2 + X[:, 1] * -1.5 + rng.normal(0, 1, n)
-    df = pd.DataFrame(X, columns=[f"feature_{i}" for i in range(9)])
-    df["target"] = y
-    return df
-
-
-@pytest.fixture
-def categorical_df() -> pd.DataFrame:
-    """Dataset with a mix of numeric and categorical columns."""
-    rng = np.random.default_rng(7)
-    n = 300
-    return pd.DataFrame({
-        "age":        rng.integers(18, 80, n),
-        "income":     rng.normal(50000, 15000, n),
-        "region":     rng.choice(["north", "south", "east", "west"], n),
-        "education":  rng.choice(["high_school", "bachelor", "master", "phd"], n),
-        "purchased":  rng.integers(0, 2, n),   # binary target
-    })
-
-
-@pytest.fixture
-def df_with_missing() -> pd.DataFrame:
-    """Dataset with intentional missing values."""
-    rng = np.random.default_rng(13)
-    n = 150
-    df = pd.DataFrame({
-        "x1": rng.normal(0, 1, n),
-        "x2": rng.normal(0, 1, n),
-        "x3": rng.normal(0, 1, n),
-        "y":  rng.normal(0, 1, n),
-    })
-    # Introduce ~15% missingness in x2
-    mask = rng.random(n) < 0.15
-    df.loc[mask, "x2"] = np.nan
-    return df
+    n = 1_000
+    x1 = rng.standard_normal(n)
+    x2 = rng.standard_normal(n)
+    x3 = x1 * 0.97 + rng.standard_normal(n) * 0.1   # highly correlated with x1
+    return pd.DataFrame(
+        {
+            "x1": x1,
+            "x2": x2,
+            "x3": x3,
+            "cat": rng.choice(["a", "b", "c", "d"], n),
+            "target": 2 * x1 - x2 + rng.standard_normal(n) * 0.5,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
-# Model / ML fixtures
+# CSV bytes helpers
 # ---------------------------------------------------------------------------
-@pytest.fixture
-def small_X_y(simple_regression_df):
-    """Return feature matrix and target array from simple_regression_df."""
-    X = simple_regression_df[["x1", "x2"]].to_numpy()
-    y = simple_regression_df["y"].to_numpy()
-    return X, y
-
 
 @pytest.fixture
-def residuals_array(small_X_y):
-    """Fake OOF residuals for a simple linear fit."""
-    X, y = small_X_y
-    from sklearn.linear_model import Ridge
-    from sklearn.model_selection import cross_val_predict
-    preds = cross_val_predict(Ridge(), X, y, cv=3)
-    return y - preds
-
-
-# ---------------------------------------------------------------------------
-# FastAPI test client
-# ---------------------------------------------------------------------------
-@pytest.fixture
-def api_client() -> Generator[TestClient, None, None]:
-    """Synchronous test client for FastAPI endpoints."""
-    from ive.main import app
-    with TestClient(app, raise_server_exceptions=False) as client:
-        yield client
+def sample_csv_bytes(sample_regression_df: pd.DataFrame) -> bytes:
+    """UTF-8 CSV bytes of the sample regression DataFrame."""
+    return sample_regression_df.to_csv(index=False).encode("utf-8")
 
 
 @pytest.fixture
-def authed_headers() -> dict[str, str]:
-    """Headers with test API key pre-set."""
-    return {"X-API-Key": "test-api-key"}
+def sample_classification_csv_bytes(sample_classification_df: pd.DataFrame) -> bytes:
+    """UTF-8 CSV bytes of the sample classification DataFrame."""
+    return sample_classification_df.to_csv(index=False).encode("utf-8")
 
 
-# ---------------------------------------------------------------------------
-# Artifact store fixture
-# ---------------------------------------------------------------------------
 @pytest.fixture
-def artifact_store(tmp_path):
-    """Local artifact store backed by a temporary directory."""
-    from ive.storage.artifact_store import LocalArtifactStore
-    return LocalArtifactStore(base_dir=str(tmp_path / "artifacts"))
+def bad_csv_bytes() -> dict[str, bytes]:
+    """Named bad CSV byte strings for negative-path tests."""
+    return {
+        "empty": b"",
+        "whitespace_only": b"   \n  \n",
+        "header_only": b"col1,col2,col3\n",
+        "single_data_row": b"col1,col2\n1,2\n",
+        "wrong_encoding": "col1,col2\nvalue,données".encode("latin-1"),
+        "no_target": b"col1,col2\n" + b"1,2\n" * 150,
+    }
+
+
+def _make_csv(n: int, target_col: str = "y", delimiter: str = ",") -> bytes:
+    """Build a minimal valid CSV with ``n`` data rows."""
+    rng = np.random.default_rng(42)
+    df = pd.DataFrame(
+        {
+            "x1": rng.standard_normal(n),
+            "x2": rng.standard_normal(n),
+            target_col: rng.standard_normal(n),
+        }
+    )
+    buf = io.StringIO()
+    df.to_csv(buf, index=False, sep=delimiter)
+    return buf.getvalue().encode("utf-8")
+
+
+@pytest.fixture
+def minimal_valid_csv() -> bytes:
+    """150-row valid CSV — just above the _MIN_ROWS=100 threshold."""
+    return _make_csv(150)
+
+
+# ---------------------------------------------------------------------------
+# Filesystem
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def temp_dir(tmp_path):
+    """Temporary directory (delegates to pytest's ``tmp_path``)."""
+    return str(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# Mock DB session
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def mock_db_session():
+    """Async SQLAlchemy session mock.
+
+    Stubs the execute / flush / commit / rollback / close / add chain so
+    that DataIngestionService can be tested without a real database.
+    """
+    session = AsyncMock()
+    session.commit = AsyncMock(return_value=None)
+    session.rollback = AsyncMock(return_value=None)
+    session.close = AsyncMock(return_value=None)
+    session.add = MagicMock()
+    session.flush = AsyncMock(return_value=None)
+
+    # execute() returns a result that supports scalar_one_or_none()
+    exec_result = MagicMock()
+    exec_result.scalar_one_or_none.return_value = None   # no duplicate found
+    session.execute = AsyncMock(return_value=exec_result)
+    return session
+
+
+# ---------------------------------------------------------------------------
+# Mock artifact store
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def mock_artifact_store():
+    """Async mock for LocalArtifactStore / S3ArtifactStore."""
+    store = AsyncMock()
+    store.save_file = AsyncMock(return_value="/artifacts/datasets/test.csv")
+    store.delete_file = AsyncMock(return_value=None)
+    store.file_exists = AsyncMock(return_value=False)
+    return store

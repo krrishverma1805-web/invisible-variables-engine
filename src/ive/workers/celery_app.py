@@ -1,63 +1,107 @@
 """
-Celery Application Configuration.
+Celery Application — Invisible Variables Engine.
 
-Creates and configures the Celery application instance used by the
-IVE worker pool. This module is the entry point for the celery CLI:
+Configures the Celery worker pool that handles long-running background jobs:
 
-    celery -A ive.workers.celery_app worker --loglevel=INFO
+    * ``run_experiment``   — full 4-phase IVE pipeline (queue: analysis)
+    * ``profile_dataset``  — post-upload data profiling (queue: analysis)
+    * ``cancel_experiment`` — SIGTERM + DB mark (queue: high_priority)
+    * ``health_check_task`` — worker liveness probe (queue: default)
+
+Broker / backend:  Redis
+Serialisation:     JSON  (never pickle — safer for distributed workers)
+Auto-discovery:    ``ive.workers`` package
+
+Usage:
+    Start workers:
+        celery -A ive.workers.celery_app worker \\
+               -Q analysis,default,high_priority \\
+               --loglevel=INFO --concurrency=4
+
+    Inspect:
+        celery -A ive.workers.celery_app inspect active
 """
 
 from __future__ import annotations
 
-from celery import Celery
+from kombu import Exchange, Queue
 
 from ive.config import get_settings
 
 settings = get_settings()
 
+# ---------------------------------------------------------------------------
+# Application instance
+# ---------------------------------------------------------------------------
+
+from celery import Celery  # noqa: E402  (imported after settings to avoid circular)
+
 celery_app = Celery(
     "ive",
-    broker=settings.redis_url,
-    backend=settings.redis_url,
+    broker=settings.celery_broker_url,
+    backend=settings.celery_result_backend,
     include=["ive.workers.tasks"],
 )
 
 # ---------------------------------------------------------------------------
-# Celery configuration
+# Queue definitions
 # ---------------------------------------------------------------------------
-celery_app.conf.update(
-    # Serialisation
-    task_serializer="json",
-    result_serializer="json",
-    accept_content=["json"],
-    # Timezone
-    timezone="UTC",
-    enable_utc=True,
-    # Result TTL (24 hours)
-    result_expires=86400,
-    # Task routing — three queues with priority
-    task_queues={
-        "default": {"routing_key": "default"},
-        "analysis": {"routing_key": "analysis"},   # CPU-heavy ML tasks
-        "high_priority": {"routing_key": "high_priority"},
-    },
-    task_default_queue="default",
-    task_routes={
-        "ive.workers.tasks.run_experiment": {"queue": "analysis"},
-        "ive.workers.tasks.profile_dataset": {"queue": "analysis"},
-        "ive.workers.tasks.cancel_experiment": {"queue": "high_priority"},
-    },
-    # Worker settings
-    worker_prefetch_multiplier=1,       # One task at a time per worker process
-    task_acks_late=True,                # Ack only after task completes (safer)
-    task_reject_on_worker_lost=True,    # Re-queue if worker crashes
-    # Retry policy defaults
-    task_max_retries=3,
-    task_default_retry_delay=30,        # seconds
-    # Monitoring
-    worker_send_task_events=True,
-    task_send_sent_event=True,
+
+_default_exchange = Exchange("default", type="direct")
+_analysis_exchange = Exchange("analysis", type="direct")
+_priority_exchange = Exchange("high_priority", type="direct")
+
+celery_app.conf.task_queues = (
+    Queue("default", _default_exchange, routing_key="default"),
+    Queue("analysis", _analysis_exchange, routing_key="analysis"),
+    Queue("high_priority", _priority_exchange, routing_key="high_priority"),
 )
 
-if __name__ == "__main__":
-    celery_app.start()
+# ---------------------------------------------------------------------------
+# Task routing
+# ---------------------------------------------------------------------------
+
+celery_app.conf.task_routes = {
+    "ive.workers.tasks.run_experiment"   : {"queue": "analysis"},
+    "ive.workers.tasks.profile_dataset"  : {"queue": "analysis"},
+    "ive.workers.tasks.cancel_experiment": {"queue": "high_priority"},
+    "ive.workers.tasks.health_check_task": {"queue": "default"},
+}
+
+# ---------------------------------------------------------------------------
+# Core settings
+# ---------------------------------------------------------------------------
+
+celery_app.conf.update(
+    # Serialisation — JSON only; never allow pickle for security
+    task_serializer=settings.celery_task_serializer,
+    result_serializer="json",
+    accept_content=["json"],
+
+    # Time
+    timezone="UTC",
+    enable_utc=True,
+
+    # Reliability
+    task_track_started=True,         # STARTED state visible before PROGRESS
+    task_acks_late=True,             # ack only after task completes (no silent drops)
+    task_reject_on_worker_lost=True, # re-queue if worker dies mid-task
+
+    # Worker resource limits
+    worker_prefetch_multiplier=1,    # one task at a time per child (memory safety)
+    worker_max_tasks_per_child=settings.celery_max_tasks_per_child,
+
+    # Results
+    result_expires=settings.celery_result_expires,
+    result_extended=True,            # store task meta (state, traceback) longer
+
+    # Default queue
+    task_default_queue="default",
+    task_default_exchange="default",
+    task_default_routing_key="default",
+
+    # Retry policy for connection errors
+    broker_connection_retry_on_startup=True,
+    broker_connection_max_retries=10,
+    broker_connection_retry=True,
+)

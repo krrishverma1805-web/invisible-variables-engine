@@ -248,6 +248,14 @@ class StorageSettings(BaseSettings):
         default="us-east-1",
         description="AWS region for the S3 bucket.",
     )
+    s3_endpoint_url: str = Field(
+        default="",
+        description="Custom S3-compatible endpoint URL (e.g. MinIO). Empty = AWS default.",
+    )
+    max_upload_size_mb: int = Field(
+        default=500, ge=1, le=5000,
+        description="Maximum allowed file upload size in megabytes.",
+    )
 
 
 # ---------------------------------------------------------------------------

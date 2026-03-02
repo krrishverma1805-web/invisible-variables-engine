@@ -1,73 +1,61 @@
 """
-Pydantic schemas for Latent Variable API responses.
+Latent Variable API Schemas — Invisible Variables Engine.
+
+STUB — Phase 2.  Defines the shape of latent variable response models.
 """
 
 from __future__ import annotations
 
-import uuid
 from datetime import datetime
+from typing import Any
+from uuid import UUID
 
-from pydantic import BaseModel, Field
-
-
-class ValidationResults(BaseModel):
-    """Statistical validation results for a latent variable."""
-
-    bootstrap_stability: float = Field(ge=0.0, le=1.0)
-    p_value: float = Field(ge=0.0, le=1.0)
-    holdout_improvement: float | None = None
-    n_bootstrap_iterations: int = 1000
-    ci_lower: float | None = None
-    ci_upper: float | None = None
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class LatentVariableSummary(BaseModel):
-    """Compact latent variable for list responses."""
+    """Compact latent variable summary for list responses."""
 
-    id: uuid.UUID
-    experiment_id: uuid.UUID
-    rank: int
-    name: str | None = None
-    confidence_score: float
-    effect_size: float
-    coverage_pct: float
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    experiment_id: UUID
+    name: str
+    status: str          # "candidate" | "validated" | "rejected"
+    importance_score: float
+    stability_score: float
+    bootstrap_presence_rate: float
     created_at: datetime
 
-    model_config = {"from_attributes": True}
 
+class LatentVariableDetail(BaseModel):
+    """Full latent variable detail response."""
 
-class LatentVariableDetailResponse(LatentVariableSummary):
-    """Full latent variable details."""
+    model_config = ConfigDict(from_attributes=True)
 
-    description: str | None = None
-    explanation: str | None = None
-    candidate_features: list[str] = Field(default_factory=list)
-    validation: ValidationResults | None = None
-    feature_importance: dict[str, float] = Field(
-        default_factory=dict,
-        description="SHAP-based importance scores for candidate features.",
-    )
-    cluster_stats: dict[str, float] = Field(
-        default_factory=dict,
-        description="Cluster-level statistical summary.",
-    )
+    id: UUID
+    experiment_id: UUID
+    name: str
+    description: str
+    construction_rule: dict[str, Any]
+    source_pattern_ids: list[UUID]
+    importance_score: float
+    stability_score: float
+    bootstrap_presence_rate: float
+    model_improvement_pct: float | None
+    confidence_interval_lower: float | None
+    confidence_interval_upper: float | None
+    explanation_text: str
+    status: str
+    created_at: datetime
 
 
 class LatentVariableListResponse(BaseModel):
-    """List of latent variables for an experiment."""
+    """Paginated list of latent variables for an experiment."""
 
-    experiment_id: uuid.UUID
-    items: list[LatentVariableSummary]
-
-
-class LatentVariableExplanationResponse(BaseModel):
-    """Natural language explanation for a latent variable."""
-
-    id: uuid.UUID
-    name: str | None = None
-    explanation: str
-    supporting_evidence: list[str] = Field(
-        default_factory=list,
-        description="Bullet-point evidence supporting this explanation.",
-    )
-    confidence_score: float
+    experiment_id: UUID
+    latent_variables: list[LatentVariableSummary]
+    total: int
+    validated_count: int
+    skip: int
+    limit: int

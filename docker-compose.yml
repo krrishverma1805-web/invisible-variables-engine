@@ -76,6 +76,7 @@ services:
       - .env
     volumes:
       - ./src:/app/src
+      -  ./alembic:/app/alembic
       - artifact_data:/app/artifacts
     ports:
       - "${API_PORT:-8000}:8000"

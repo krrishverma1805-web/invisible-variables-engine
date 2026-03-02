@@ -1,112 +1,120 @@
 """
-Experiments API Endpoints.
+Experiment Endpoints — Invisible Variables Engine.
 
-Create and manage analysis experiments. Starting an experiment queues a
-Celery task that runs the four-phase IVE pipeline.
+STUB — Phase 2.
+
+All endpoints return HTTP 501 (Not Implemented) until the experiment
+pipeline (Celery tasks, IVE engine phases) is wired in Phase 2.
+
+Routes:
+    POST   /experiments/                          — Create experiment
+    GET    /experiments/                          — List experiments
+    GET    /experiments/{experiment_id}           — Experiment detail
+    GET    /experiments/{experiment_id}/progress  — Progress poll
+    POST   /experiments/{experiment_id}/cancel    — Cancel
+    DELETE /experiments/{experiment_id}           — Delete
 """
 
 from __future__ import annotations
 
-import uuid
-from typing import Annotated
+from uuid import UUID
 
-import structlog
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from ive.api.v1.dependencies import get_db, get_pagination
 from ive.api.v1.schemas.experiment_schemas import (
     ExperimentCreateRequest,
     ExperimentCreateResponse,
-    ExperimentDetailResponse,
     ExperimentListResponse,
+    ExperimentProgressResponse,
+    ExperimentResponse,
 )
+from ive.utils.logging import get_logger
 
-log = structlog.get_logger(__name__)
-
+log = get_logger(__name__)
 router = APIRouter()
+
+_NOT_IMPLEMENTED = "Experiments are not yet implemented — coming in Phase 2."
 
 
 @router.post(
-    "",
-    response_model=ExperimentCreateResponse,
+    "/",
     status_code=status.HTTP_202_ACCEPTED,
-    summary="Start a new experiment",
+    response_model=ExperimentCreateResponse,
+    summary="Create an experiment (Phase 2)",
 )
-async def create_experiment(body: ExperimentCreateRequest) -> ExperimentCreateResponse:
-    """
-    Queue a new IVE analysis experiment.
-
-    Steps:
-        1. Validate that the dataset exists and is in 'profiled' status
-        2. Create the experiment record in the DB (status='queued')
-        3. Enqueue workers.tasks.run_experiment.delay(experiment_id)
-        4. Return 202 Accepted with experiment_id and task_id
-
-    TODO:
-        - Call DatasetRepo.get_by_id() to verify dataset exists
-        - Call ExperimentRepo.create()
-        - Call workers.tasks.run_experiment.apply_async()
-    """
-    experiment_id = uuid.uuid4()
-    task_id = str(uuid.uuid4())  # TODO: real Celery task ID
-
-    log.info(
-        "ive.experiment.queued",
-        experiment_id=str(experiment_id),
-        dataset_id=str(body.dataset_id),
-    )
-
-    return ExperimentCreateResponse(
-        id=experiment_id,
-        dataset_id=body.dataset_id,
-        name=body.name,
-        status="queued",
-        task_id=task_id,
-    )
+async def create_experiment(
+    request: ExperimentCreateRequest,
+    db: AsyncSession = Depends(get_db),
+) -> ExperimentCreateResponse:
+    """[STUB] Queue an experiment for the IVE pipeline."""
+    log.info("experiments.create.stub", dataset_id=str(request.dataset_id))
+    raise HTTPException(status_code=501, detail=_NOT_IMPLEMENTED)
 
 
-@router.get("", response_model=ExperimentListResponse, summary="List experiments")
+@router.get(
+    "/",
+    response_model=ExperimentListResponse,
+    summary="List experiments (Phase 2)",
+)
 async def list_experiments(
-    dataset_id: Annotated[uuid.UUID | None, Query()] = None,
-    status_filter: Annotated[str | None, Query(alias="status")] = None,
-    page: Annotated[int, Query(ge=1)] = 1,
-    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+    dataset_id: UUID | None = Query(None, description="Filter by dataset"),
+    experiment_status: str | None = Query(None, alias="status"),
+    pagination: dict = Depends(get_pagination),
+    db: AsyncSession = Depends(get_db),
 ) -> ExperimentListResponse:
-    """
-    List experiments with optional filters.
-
-    TODO:
-        - Call ExperimentRepo.list() with filters
-        - Support filtering by dataset_id and status
-    """
-    return ExperimentListResponse(items=[], total=0, page=page, page_size=page_size)
+    """[STUB] Return paginated list of experiments."""
+    raise HTTPException(status_code=501, detail=_NOT_IMPLEMENTED)
 
 
-@router.get("/{experiment_id}", response_model=ExperimentDetailResponse, summary="Get experiment")
-async def get_experiment(experiment_id: uuid.UUID) -> ExperimentDetailResponse:
-    """
-    Retrieve experiment details including phase progress.
+@router.get(
+    "/{experiment_id}",
+    response_model=ExperimentResponse,
+    summary="Get experiment detail (Phase 2)",
+)
+async def get_experiment(
+    experiment_id: UUID,
+    db: AsyncSession = Depends(get_db),
+) -> ExperimentResponse:
+    """[STUB] Return full experiment detail."""
+    raise HTTPException(status_code=501, detail=_NOT_IMPLEMENTED)
 
-    TODO:
-        - Call ExperimentRepo.get_by_id()
-        - Include phase breakdown and latest events
-        - Raise 404 if not found
-    """
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail=f"Experiment '{experiment_id}' not found",
-    )
+
+@router.get(
+    "/{experiment_id}/progress",
+    response_model=ExperimentProgressResponse,
+    summary="Poll experiment progress (Phase 2)",
+)
+async def get_experiment_progress(
+    experiment_id: UUID,
+    db: AsyncSession = Depends(get_db),
+) -> ExperimentProgressResponse:
+    """[STUB] Return lightweight progress for the polling loop."""
+    raise HTTPException(status_code=501, detail=_NOT_IMPLEMENTED)
+
+
+@router.post(
+    "/{experiment_id}/cancel",
+    response_model=ExperimentResponse,
+    summary="Cancel an experiment (Phase 2)",
+)
+async def cancel_experiment(
+    experiment_id: UUID,
+    db: AsyncSession = Depends(get_db),
+) -> ExperimentResponse:
+    """[STUB] Revoke the Celery task and mark the experiment as cancelled."""
+    raise HTTPException(status_code=501, detail=_NOT_IMPLEMENTED)
 
 
 @router.delete(
-    "/{experiment_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Cancel/delete experiment"
+    "/{experiment_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete an experiment (Phase 2)",
 )
-async def delete_experiment(experiment_id: uuid.UUID) -> None:
-    """
-    Cancel a running experiment or delete a completed one.
-
-    TODO:
-        - If status=='running': revoke the Celery task
-        - Call ExperimentRepo.delete()
-        - Return 204 on success
-    """
-    log.info("ive.experiment.delete", experiment_id=str(experiment_id))
+async def delete_experiment(
+    experiment_id: UUID,
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """[STUB] Delete an experiment and its associated artefacts."""
+    raise HTTPException(status_code=501, detail=_NOT_IMPLEMENTED)

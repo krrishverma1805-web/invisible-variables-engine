@@ -1,91 +1,97 @@
 """
-Pydantic schemas for Experiment API requests and responses.
+Experiment API Schemas — Invisible Variables Engine.
+
+STUB — Phase 2.  Defines the shape of experiment request/response models.
+Endpoints are not yet implemented.
 """
 
 from __future__ import annotations
 
-import uuid
 from datetime import datetime
-from typing import Literal
+from typing import Any
+from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ExperimentConfig(BaseModel):
-    """Configuration for an IVE experiment run."""
+    """Configuration for a single IVE experiment run.
 
-    model_types: list[Literal["linear", "xgboost"]] = Field(
+    TODO: implement full validation in Phase 2.
+    """
+
+    # Model config
+    model_types: list[str] = Field(
         default=["linear", "xgboost"],
-        description="ML model types to use for residual computation.",
+        description="Model types to train (linear, xgboost, lightgbm).",
     )
-    cv_folds: int = Field(default=5, ge=2, le=20, description="Cross-validation folds.")
+    n_cv_folds: int = Field(default=5, ge=2, le=20)
+    test_size: float = Field(default=0.2, gt=0.0, lt=1.0)
     random_seed: int = Field(default=42)
-    min_cluster_size: int = Field(default=10, ge=2, description="HDBSCAN minimum cluster size.")
-    shap_sample_size: int = Field(default=500, ge=50, description="Max samples for SHAP.")
-    max_latent_variables: int = Field(default=5, ge=1, le=20)
-    feature_selection_threshold: float = Field(
-        default=0.01, ge=0.0, le=1.0,
-        description="Minimum SHAP importance to include a feature.",
-    )
+
+    # Detection thresholds
+    min_subgroup_size: int = Field(default=30)
+    significance_level: float = Field(default=0.05)
+    effect_size_threshold: float = Field(default=0.3)
+
+    # Bootstrap validation
+    n_bootstrap_iterations: int = Field(default=100)
+    bootstrap_presence_threshold: float = Field(default=0.7)
+
+    # Feature limits
+    max_features: int = Field(default=100)
+    shap_sample_size: int = Field(default=500)
 
 
 class ExperimentCreateRequest(BaseModel):
     """Request body for creating a new experiment."""
 
-    dataset_id: uuid.UUID
-    name: str = Field(..., min_length=1, max_length=255)
+    dataset_id: UUID
     config: ExperimentConfig = Field(default_factory=ExperimentConfig)
 
 
-class ExperimentCreateResponse(BaseModel):
-    """Response after successfully queueing an experiment."""
+class ExperimentResponse(BaseModel):
+    """Full experiment detail response.
 
-    id: uuid.UUID
-    dataset_id: uuid.UUID
-    name: str
-    status: Literal["queued", "running", "completed", "failed", "cancelled"]
-    task_id: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    TODO: implement in Phase 2.
+    """
 
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(from_attributes=True)
 
-
-class PhaseStatus(BaseModel):
-    """Status of a single pipeline phase."""
-
-    status: Literal["pending", "running", "completed", "failed"]
-    duration_s: float | None = None
-    error_msg: str | None = None
-
-
-class ExperimentDetailResponse(ExperimentCreateResponse):
-    """Full experiment details including per-phase progress."""
-
-    current_phase: str | None = None
-    progress_pct: int = 0
-    phases: dict[str, PhaseStatus] = Field(default_factory=dict)
-    error_msg: str | None = None
-    started_at: datetime | None = None
-    completed_at: datetime | None = None
-
-
-class ExperimentSummary(BaseModel):
-    """Compact experiment summary for list responses."""
-
-    id: uuid.UUID
-    dataset_id: uuid.UUID
-    name: str
+    id: UUID
+    dataset_id: UUID
     status: str
-    current_phase: str | None = None
+    progress_pct: int
+    current_stage: str | None
+    error_message: str | None
+    celery_task_id: str | None
+    config_json: dict[str, Any]
     created_at: datetime
-
-    model_config = {"from_attributes": True}
+    started_at: datetime | None
+    completed_at: datetime | None
 
 
 class ExperimentListResponse(BaseModel):
-    """Paginated list of experiments."""
+    """Paginated experiment list."""
 
-    items: list[ExperimentSummary]
+    experiments: list[ExperimentResponse]
     total: int
-    page: int
-    page_size: int
+    skip: int
+    limit: int
+
+
+class ExperimentCreateResponse(BaseModel):
+    """Minimal response on experiment creation (202 Accepted)."""
+
+    id: UUID
+    status: str
+    message: str
+
+
+class ExperimentProgressResponse(BaseModel):
+    """Lightweight progress-poll response."""
+
+    id: UUID
+    status: str
+    progress_pct: int
+    current_stage: str | None

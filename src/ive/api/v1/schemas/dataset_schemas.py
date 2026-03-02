@@ -1,74 +1,131 @@
 """
-Pydantic schemas for Dataset API requests and responses.
+Dataset API Schemas — Invisible Variables Engine.
 
-These schemas define the shape of data entering and leaving the API layer.
-They are separate from the SQLAlchemy ORM models (db/models.py).
+Pydantic models for the dataset upload, list, detail, and profile endpoints.
+All models used as FastAPI response bodies are annotated with
+``model_config = ConfigDict(from_attributes=True)`` so they can be
+constructed directly from SQLAlchemy ORM instances.
 """
 
 from __future__ import annotations
 
-import uuid
 from datetime import datetime
-from typing import Literal
+from typing import Any
+from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
-class DatasetCreateResponse(BaseModel):
-    """Response after successfully uploading a dataset."""
+# ---------------------------------------------------------------------------
+# Column-level info (part of dataset detail response)
+# ---------------------------------------------------------------------------
 
-    id: uuid.UUID
+class ColumnInfo(BaseModel):
+    """Compact per-column metadata returned in the dataset detail response."""
+
     name: str
-    target_column: str
-    description: str | None = None
-    row_count: int
-    column_count: int
-    status: Literal["uploaded", "profiling", "profiled", "error"]
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-
-    model_config = {"from_attributes": True}
+    detected_type: str       # "numeric" | "categorical" | "datetime" | "boolean" | "text" | "id"
+    dtype: str               # original pandas dtype string, e.g. "float64"
+    null_pct: float
+    unique_count: int
+    sample_values: list[Any] = Field(default_factory=list)
 
 
-class DatasetSummary(BaseModel):
-    """Compact dataset summary for list responses."""
+# ---------------------------------------------------------------------------
+# Core dataset response
+# ---------------------------------------------------------------------------
 
-    id: uuid.UUID
+class DatasetResponse(BaseModel):
+    """Full dataset metadata returned by upload, detail, and list endpoints."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
     name: str
-    target_column: str
+    original_filename: str
     row_count: int
-    column_count: int
-    status: str
+    col_count: int
+    target_column: str
+    time_column: str | None
+    file_size_bytes: int
+    checksum: str
+    columns: list[ColumnInfo] = Field(default_factory=list)
+    quality_score: float | None = None
     created_at: datetime
 
-    model_config = {"from_attributes": True}
+    @classmethod
+    def from_dataset(cls, ds: Any) -> "DatasetResponse":
+        """Construct from a ``Dataset`` ORM instance.
 
+        Extracts ``columns`` and ``quality_score`` from ``schema_json``.
+        """
+        schema: dict = ds.schema_json or {}
+        raw_cols: list[dict] = schema.get("columns", [])
+        columns = [
+            ColumnInfo(
+                name=c.get("name", ""),
+                detected_type=c.get("type", "unknown"),
+                dtype=c.get("dtype", ""),
+                null_pct=c.get("null_pct", 0.0),
+                unique_count=c.get("unique_count", 0),
+                sample_values=c.get("sample_values", []),
+            )
+            for c in raw_cols
+        ]
+        return cls(
+            id=ds.id,
+            name=ds.name,
+            original_filename=ds.original_filename,
+            row_count=ds.row_count,
+            col_count=ds.col_count,
+            target_column=ds.target_column,
+            time_column=ds.time_column,
+            file_size_bytes=ds.file_size_bytes,
+            checksum=ds.checksum,
+            columns=columns,
+            quality_score=schema.get("quality_score"),
+            created_at=ds.created_at,
+        )
+
+
+# ---------------------------------------------------------------------------
+# List response
+# ---------------------------------------------------------------------------
 
 class DatasetListResponse(BaseModel):
     """Paginated list of datasets."""
 
-    items: list[DatasetSummary]
+    datasets: list[DatasetResponse]
     total: int
-    page: int
-    page_size: int
+    skip: int
+    limit: int
 
 
-class ColumnProfile(BaseModel):
-    """Statistical profile of a single column."""
+# ---------------------------------------------------------------------------
+# Profile response
+# ---------------------------------------------------------------------------
 
-    name: str
-    dtype: str
-    missing_pct: float
-    unique_count: int
-    mean: float | None = None
-    std: float | None = None
-    min: float | None = None
-    max: float | None = None
-    top_values: list[str] = Field(default_factory=list)
+class DatasetProfileResponse(BaseModel):
+    """Statistical profile returned by ``GET /datasets/{id}/profile``."""
+
+    dataset_id: UUID
+    row_count: int
+    col_count: int
+    memory_usage_mb: float
+    target_stats: dict[str, Any]
+    column_profiles: list[dict[str, Any]]
+    quality_score: float
+    quality_issues: list[dict[str, Any]]
+    recommendations: list[str]
+    top_correlations: list[dict[str, Any]]
 
 
-class DatasetDetailResponse(DatasetCreateResponse):
-    """Full dataset details including column profiles."""
+# ---------------------------------------------------------------------------
+# Delete response
+# ---------------------------------------------------------------------------
 
-    file_path: str | None = None
-    column_profiles: list[ColumnProfile] = Field(default_factory=list)
-    correlation_issues: list[str] = Field(default_factory=list)
+class DeleteResponse(BaseModel):
+    """Acknowledgment returned after a successful delete."""
+
+    message: str
+    dataset_id: UUID

@@ -1,73 +1,129 @@
 """
-FastAPI Dependencies.
+Shared FastAPI Dependencies — Invisible Variables Engine.
 
-Reusable dependency functions injected via FastAPI's Depends() mechanism.
-Provides database sessions, repository instances, and current-user context.
+Reusable dependency functions injected via ``Depends()``.
+
+Provides:
+    - ``get_db()``              — yields an ``AsyncSession`` scoped to the request
+    - ``get_current_api_key()`` — returns the validated API key from the header
+    - ``get_pagination()``      — standard skip/limit pagination params
+    - Typed repository shortcuts for convenience
 """
 
 from __future__ import annotations
 
 from typing import AsyncGenerator
 
-import structlog
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-log = structlog.get_logger(__name__)
+from ive.db.database import get_session
+from ive.db.models import Dataset, Experiment, LatentVariable
+from ive.db.repositories.dataset_repo import DatasetRepository
+from ive.db.repositories.experiment_repo import ExperimentRepository
+from ive.db.repositories.latent_variable_repo import LatentVariableRepository
+from ive.utils.logging import get_logger
+
+log = get_logger(__name__)
 
 
-async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
-    """
-    Yield an async SQLAlchemy session, closing it after the request.
+# ---------------------------------------------------------------------------
+# Database session
+# ---------------------------------------------------------------------------
 
-    Usage:
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    """Yield an ``AsyncSession`` bound to the current request.
+
+    The session auto-commits on clean exit and rolls back on any exception.
+    Wraps :func:`ive.db.database.get_session`.
+
+    Usage::
+
         @router.get("/items")
-        async def list_items(db: AsyncSession = Depends(get_db_session)):
+        async def list_items(db: AsyncSession = Depends(get_db)):
             ...
-
-    TODO:
-        - Import async_session_factory from ive.db.database
-        - Use async with async_session_factory() as session: yield session
     """
-    # TODO: Implement real session factory
-    # from ive.db.database import async_session_factory
-    # async with async_session_factory() as session:
-    #     yield session
-    raise NotImplementedError("DB session dependency not yet implemented")
+    async with get_session() as session:
+        yield session
 
 
-async def get_current_api_key(
-    x_api_key: str = Header(..., alias="X-API-Key"),
-) -> str:
-    """
-    Extract and validate the API key from the request header.
-
-    Note: Primary validation is in APIKeyMiddleware. This dependency is
-    available for endpoints that want the key value (e.g., for audit logs).
-
-    TODO:
-        - Return the key for audit/logging use
-        - Or look up the associated identity in a DB keys table
-    """
-    # TODO: Validate and return the API key principal
-    return x_api_key
+# Alias for backward compatibility with existing endpoints
+get_db_session = get_db
 
 
 # ---------------------------------------------------------------------------
-# Repository dependencies (convenience shortcuts)
+# API Key
 # ---------------------------------------------------------------------------
 
-# TODO: Uncomment these as the repository classes are implemented
-#
-# from ive.db.repositories.dataset_repo import DatasetRepo
-# from ive.db.repositories.experiment_repo import ExperimentRepo
-# from ive.db.repositories.latent_variable_repo import LatentVariableRepo
-#
-# def get_dataset_repo(db: AsyncSession = Depends(get_db_session)) -> DatasetRepo:
-#     return DatasetRepo(db)
-#
-# def get_experiment_repo(db: AsyncSession = Depends(get_db_session)) -> ExperimentRepo:
-#     return ExperimentRepo(db)
-#
-# def get_lv_repo(db: AsyncSession = Depends(get_db_session)) -> LatentVariableRepo:
-#     return LatentVariableRepo(db)
+async def get_current_api_key(request: Request) -> str:
+    """Extract the validated API key from the request.
+
+    The key has already been validated by :class:`APIKeyMiddleware`.
+    This dependency simply retrieves it from ``request.state`` for
+    audit logging or fine-grained permission checks.
+
+    Args:
+        request: The incoming request.
+
+    Returns:
+        The API key string.
+
+    Raises:
+        ValueError: If the middleware hasn't run (should never happen in
+            production).
+    """
+    api_key = getattr(request.state, "api_key", None)
+    if not api_key:
+        from fastapi import HTTPException, status
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API key not found in request state.",
+        )
+    return api_key
+
+
+# ---------------------------------------------------------------------------
+# Pagination
+# ---------------------------------------------------------------------------
+
+def get_pagination(
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(100, ge=1, le=1000, description="Max records to return"),
+) -> dict[str, int]:
+    """Standard pagination parameters as a dependency.
+
+    Usage::
+
+        @router.get("/items")
+        async def list_items(pagination: dict = Depends(get_pagination)):
+            skip, limit = pagination["skip"], pagination["limit"]
+
+    Returns:
+        Dict with ``skip`` and ``limit`` keys.
+    """
+    return {"skip": skip, "limit": limit}
+
+
+# ---------------------------------------------------------------------------
+# Repository shortcuts
+# ---------------------------------------------------------------------------
+
+def get_dataset_repo(
+    session: AsyncSession = Depends(get_db),
+) -> DatasetRepository:
+    """Return a :class:`DatasetRepository` bound to the request session."""
+    return DatasetRepository(session, Dataset)
+
+
+def get_experiment_repo(
+    session: AsyncSession = Depends(get_db),
+) -> ExperimentRepository:
+    """Return an :class:`ExperimentRepository` bound to the request session."""
+    return ExperimentRepository(session, Experiment)
+
+
+def get_lv_repo(
+    session: AsyncSession = Depends(get_db),
+) -> LatentVariableRepository:
+    """Return a :class:`LatentVariableRepository` bound to the request session."""
+    return LatentVariableRepository(session, LatentVariable)

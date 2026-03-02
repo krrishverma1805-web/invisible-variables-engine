@@ -1,89 +1,109 @@
 """
-Rate Limiting Middleware.
+Rate Limiting Middleware — Invisible Variables Engine.
 
-Uses slowapi / Redis counters to enforce per-client request rate limits.
-Clients are identified by their API key (or IP address as a fallback).
-Exceeding the limit returns HTTP 429 with a Retry-After header.
+Uses ``slowapi`` (a Starlette/FastAPI adapter around ``limits``) to enforce
+per-client request rate limits.
+
+Clients are identified by their ``X-API-Key`` header.  If no key is present
+the client IP address is used as the fallback identifier.
+
+Configuration (from ``ive.config.Settings``):
+    rate_limit_requests — max requests per window (default 100)
+    rate_limit_window   — window size in seconds (default 60)
+
+Exceeding the limit returns HTTP 429 with a JSON body and ``Retry-After``
+header.
+
+NOTE: ``slowapi`` must be in ``pyproject.toml`` (``slowapi = "^0.1.9"``).
 """
 
 from __future__ import annotations
 
-import time
-
-import structlog
-from fastapi import Request, status
-from fastapi.responses import JSONResponse
-from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
-from starlette.responses import Response
+from fastapi import FastAPI, Request
 
 from ive.config import get_settings
+from ive.utils.logging import get_logger
 
-log = structlog.get_logger(__name__)
-
-# In-memory fallback store for development (not suitable for production multi-process)
-# TODO: Replace with Redis-backed counter using aioredis for production
-_rate_store: dict[str, tuple[int, float]] = {}
+log = get_logger(__name__)
 
 
-class RateLimitMiddleware(BaseHTTPMiddleware):
+def _key_func(request: Request) -> str:
+    """Identify the client for rate-limiting purposes.
+
+    Priority:
+        1. ``X-API-Key`` header (per-key quotas)
+        2. Client IP address (anonymous requests)
+
+    Args:
+        request: The incoming Starlette request.
+
+    Returns:
+        A string identifying the client.
     """
-    Simple sliding-window rate limiter.
+    settings = get_settings()
+    api_key = request.headers.get(settings.api_key_header)
+    if api_key:
+        return f"key:{api_key}"
+    if request.client:
+        return f"ip:{request.client.host}"
+    return "ip:unknown"
 
-    For each client (identified by API key or IP):
-        - Tracks (request_count, window_start_time) in Redis (or in-memory dev store)
-        - Resets counter after settings.rate_limit_window seconds
-        - Returns 429 if count exceeds settings.rate_limit_requests
 
-    TODO: Replace in-memory _rate_store with Redis for multi-process correctness.
-    TODO: Implement proper sliding window algorithm (currently fixed window).
+def setup_rate_limiter(app: FastAPI) -> None:
+    """Configure ``slowapi`` rate limiting on the FastAPI application.
+
+    Should be called during ``create_app()`` in ``main.py``.
+
+    Args:
+        app: The FastAPI application instance.
     """
-
-    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        """Check rate limit before passing request downstream."""
-        settings = get_settings()
-
-        # Identify client by API key header or fallback to IP
-        client_id = request.headers.get(settings.api_key_header) or (
-            request.client.host if request.client else "unknown"
+    try:
+        from slowapi import Limiter, _rate_limit_exceeded_handler
+        from slowapi.errors import RateLimitExceeded
+    except ImportError:
+        log.warning(
+            "ive.rate_limit.disabled",
+            reason="slowapi not installed — rate limiting is off",
         )
+        return
 
-        now = time.monotonic()
-        count, window_start = _rate_store.get(client_id, (0, now))
+    settings = get_settings()
+    default_limit = f"{settings.rate_limit_requests}/{settings.rate_limit_window}second"
 
-        # Reset window if expired
-        if now - window_start > settings.rate_limit_window:
-            count = 0
-            window_start = now
+    limiter = Limiter(
+        key_func=_key_func,
+        default_limits=[default_limit],
+        enabled=True,
+        storage_uri=settings.redis_url,
+    )
 
-        count += 1
-        _rate_store[client_id] = (count, window_start)
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _custom_rate_limit_handler)
 
-        if count > settings.rate_limit_requests:
-            retry_after = int(settings.rate_limit_window - (now - window_start))
-            log.warning(
-                "ive.rate_limit.exceeded",
-                client_id=client_id,
-                count=count,
-                limit=settings.rate_limit_requests,
-            )
-            response = JSONResponse(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                content={
-                    "error": {
-                        "code": "RATE_LIMITED",
-                        "message": (
-                            f"Rate limit exceeded. Max {settings.rate_limit_requests} "
-                            f"requests per {settings.rate_limit_window}s."
-                        ),
-                    }
-                },
-            )
-            response.headers["Retry-After"] = str(retry_after)
-            return response
+    log.info(
+        "ive.rate_limit.configured",
+        default_limit=default_limit,
+    )
 
-        response = await call_next(request)
-        response.headers["X-RateLimit-Limit"] = str(settings.rate_limit_requests)
-        response.headers["X-RateLimit-Remaining"] = str(
-            max(0, settings.rate_limit_requests - count)
-        )
-        return response
+
+async def _custom_rate_limit_handler(request: Request, exc: Exception) -> None:
+    """Return a structured JSON 429 response when the rate limit is exceeded."""
+    from fastapi.responses import JSONResponse
+
+    settings = get_settings()
+    retry_after = settings.rate_limit_window
+
+    return JSONResponse(
+        status_code=429,
+        content={
+            "error": {
+                "code": "RATE_LIMITED",
+                "message": (
+                    f"Rate limit exceeded. Max {settings.rate_limit_requests} "
+                    f"requests per {settings.rate_limit_window}s."
+                ),
+                "request_id": getattr(request.state, "request_id", None),
+            }
+        },
+        headers={"Retry-After": str(retry_after)},
+    )
