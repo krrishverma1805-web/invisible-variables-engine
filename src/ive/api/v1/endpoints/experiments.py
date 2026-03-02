@@ -107,14 +107,27 @@ async def cancel_experiment(
     raise HTTPException(status_code=501, detail=_NOT_IMPLEMENTED)
 
 
+from fastapi import Response, status
+
 @router.delete(
     "/{experiment_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete an experiment (Phase 2)",
 )
 async def delete_experiment(
     experiment_id: UUID,
     db: AsyncSession = Depends(get_db),
-) -> None:
-    """[STUB] Delete an experiment and its associated artefacts."""
-    raise HTTPException(status_code=501, detail=_NOT_IMPLEMENTED)
+):
+    """Delete experiment. Returns 204 on success."""
+    
+    repo = ExperimentRepository(db)
+    experiment = await repo.get_by_id(experiment_id)
+
+    if not experiment:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Experiment not found",
+        )
+
+    await repo.delete(experiment_id)
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

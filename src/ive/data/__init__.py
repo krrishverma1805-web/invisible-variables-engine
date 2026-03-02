@@ -1,7 +1,10 @@
-"""Data layer package — ingestion, profiling, validation, preprocessing."""
-from ive.data.ingestion import DataIngestion
-from ive.data.profiler import DataProfiler
-from ive.data.validator import DataValidator
-from ive.data.preprocessor import DataPreprocessor
+"""Data layer package — ingestion, profiling."""
 
-__all__ = ["DataIngestion", "DataProfiler", "DataValidator", "DataPreprocessor"]
+from ive.data.ingestion import DataIngestionService, DatasetValidationError
+from ive.data.profiler import DataProfiler
+
+__all__ = [
+    "DataIngestionService",
+    "DatasetValidationError",
+    "DataProfiler",
+]

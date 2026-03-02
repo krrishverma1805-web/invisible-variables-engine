@@ -242,6 +242,8 @@ async def get_dataset(
 # DELETE /datasets/{dataset_id} — Delete dataset
 # ---------------------------------------------------------------------------
 
+from fastapi import Response, status
+
 @router.delete(
     "/{dataset_id}",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -254,11 +256,14 @@ async def get_dataset(
 async def delete_dataset(
     dataset_id: UUID,
     db: AsyncSession = Depends(get_db),
-) -> None:
-    """Delete dataset and its artifact file.  Returns 204 on success."""
+):
+    """Delete dataset and its artifact file. Returns 204 on success."""
+    
     log.info("datasets.delete", dataset_id=str(dataset_id))
+
     repo = DatasetRepository(db, Dataset)
     dataset = await repo.get_by_id(dataset_id)
+
     if dataset is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -273,12 +278,16 @@ async def delete_dataset(
         log.warning("datasets.delete.artifact_error", error=str(exc))
 
     deleted = await repo.delete(dataset_id)
+
     if not deleted:
-        raise HTTPException(status_code=500, detail="Failed to delete dataset record.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete dataset record.",
+        )
 
     log.info("datasets.deleted", dataset_id=str(dataset_id))
-    # 204 — no body
 
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 # ---------------------------------------------------------------------------
 # GET /datasets/{dataset_id}/profile — Statistical profile
