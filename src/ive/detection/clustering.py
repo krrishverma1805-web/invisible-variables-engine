@@ -1,43 +1,239 @@
 """
-HDBSCAN Clustering for Residual Space Analysis.
+HDBSCAN Clustering — Phase 3 Detection Engine.
 
-Clusters samples in the joint (residual, feature) space to find dense
-groups of samples that share similar systematic error patterns. These
-clusters are strong candidates for latent variable subgroups.
+Clusters the **worst-performing** samples (highest absolute residuals) to
+discover dense groups that share similar feature-space structure.  These
+clusters are strong candidates for latent variable subgroups because they
+represent samples the model systematically fails on *and* that are
+geometrically close in feature space.
 
-HDBSCAN is preferred over K-Means because:
-    - Does not require specifying k in advance
-    - Handles noise points (label = -1) gracefully
-    - Finds clusters of variable density
+Algorithm
+---------
+1. Retain only the top-20 % absolute-error samples (≥ 80th percentile).
+2. Isolate numeric features and apply ``StandardScaler``.
+3. Fit ``hdbscan.HDBSCAN`` on the scaled feature matrix.
+4. For each cluster (label ≠ −1), record:
+   • cluster center (unscaled feature means),
+   • mean & std of absolute residuals,
+   • sample count.
+
+HDBSCAN is preferred over K-Means because it does not require specifying
+*k* in advance, handles noise points (label = −1), and finds clusters of
+variable density.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
+import pandas as pd
 import structlog
+from sklearn.preprocessing import StandardScaler
 
 log = structlog.get_logger(__name__)
+
+# ---------------------------------------------------------------------------
+# Thresholds
+# ---------------------------------------------------------------------------
+_HIGH_ERROR_PERCENTILE: int = 80  # keep the worst 20 %
+_MIN_SAMPLES_FOR_CLUSTERING: int = 30  # below this, clustering is pointless
+
+
+# ---------------------------------------------------------------------------
+# Legacy dataclass kept for backward-compatibility with __init__.py exports.
+# ---------------------------------------------------------------------------
 
 
 @dataclass
 class ClusteringResult:
-    """Output of HDBSCAN clustering."""
+    """Output of the legacy :class:`HDBSCANClusterer.fit` method."""
 
-    labels: np.ndarray  # -1 = noise, 0..k = cluster id
+    labels: np.ndarray
     n_clusters: int = 0
     noise_fraction: float = 0.0
     cluster_stats: dict[int, dict[str, float]] = field(default_factory=dict)
-    validity_score: float = 0.0  # DBCV score (-1 to 1)
+    validity_score: float = 0.0
+
+
+# ---------------------------------------------------------------------------
+# New Phase-3 class requested by the user brief
+# ---------------------------------------------------------------------------
+
+
+class HDBSCANClustering:
+    """Cluster high-error samples to discover latent-variable subgroups.
+
+    Focuses exclusively on the *worst* 20 % of prediction errors,
+    standardises numeric features, and runs HDBSCAN to find dense pockets
+    of jointly-similar high-error samples.
+
+    Args:
+        high_error_percentile: Percentile threshold above which samples are
+                               retained for clustering (default 80).
+        min_samples_for_clustering: Minimum filtered samples required to
+                                    attempt clustering (default 30).
+    """
+
+    def __init__(
+        self,
+        high_error_percentile: int = _HIGH_ERROR_PERCENTILE,
+        min_samples_for_clustering: int = _MIN_SAMPLES_FOR_CLUSTERING,
+    ) -> None:
+        self.high_error_percentile = high_error_percentile
+        self.min_samples_for_clustering = min_samples_for_clustering
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def detect(
+        self,
+        X: pd.DataFrame,
+        abs_residuals: np.ndarray,
+        min_cluster_size: int = 15,
+    ) -> list[dict[str, Any]]:
+        """Discover clusters among high-error samples.
+
+        Args:
+            X:                Feature DataFrame (n_samples × n_features).
+            abs_residuals:    Absolute OOF residuals, shape ``(n_samples,)``.
+            min_cluster_size: Minimum samples for HDBSCAN to form a cluster.
+
+        Returns:
+            List of cluster pattern dicts sorted by ``mean_error``
+            descending.  Each dict contains:
+
+            * ``pattern_type``   — always ``"cluster"``
+            * ``cluster_id``     — integer label (0-based)
+            * ``sample_count``   — number of samples in the cluster
+            * ``mean_error``     — mean absolute residual within the cluster
+            * ``std_error``      — std of absolute residuals
+            * ``cluster_center`` — dict mapping numeric column name → mean
+              (in original, unscaled units)
+
+            Returns ``[]`` if there are too few samples, no numeric columns,
+            or HDBSCAN finds no clusters.
+        """
+        import hdbscan as _hdbscan
+
+        abs_residuals = np.asarray(abs_residuals, dtype=np.float64)
+
+        if len(X) != len(abs_residuals):
+            raise ValueError(
+                f"X has {len(X)} rows but abs_residuals has {len(abs_residuals)} entries."
+            )
+
+        if len(abs_residuals) == 0:
+            log.info("ive.clustering.skip_empty")
+            return []
+
+        # ── Step 2: Filter to the worst 20 % ──────────────────────────
+        threshold = float(np.percentile(abs_residuals, self.high_error_percentile))
+        high_mask = abs_residuals >= threshold
+
+        X_high = X.loc[high_mask].reset_index(drop=True)
+        abs_high = abs_residuals[high_mask]
+
+        if len(X_high) < self.min_samples_for_clustering:
+            log.info(
+                "ive.clustering.too_few_samples",
+                n_filtered=len(X_high),
+                threshold=self.min_samples_for_clustering,
+            )
+            return []
+
+        # ── Step 4: Isolate numeric columns ────────────────────────────
+        numeric_cols = X_high.select_dtypes(include=[np.number]).columns.tolist()
+        if not numeric_cols:
+            log.info("ive.clustering.no_numeric_columns")
+            return []
+
+        X_numeric = X_high[numeric_cols].copy()
+
+        # ── Step 5: Scale + NaN → 0 ───────────────────────────────────
+        scaler = StandardScaler()
+        scaled = scaler.fit_transform(X_numeric.values.astype(np.float64))
+        np.nan_to_num(scaled, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+
+        log.info(
+            "ive.clustering.fit",
+            n_samples=len(scaled),
+            n_features=len(numeric_cols),
+            min_cluster_size=min_cluster_size,
+        )
+
+        # ── Step 6: Run HDBSCAN ────────────────────────────────────────
+        clusterer = _hdbscan.HDBSCAN(
+            min_cluster_size=min_cluster_size,
+            metric="euclidean",
+        )
+        clusterer.fit(scaled)
+        labels: np.ndarray = clusterer.labels_
+
+        unique_labels = set(labels.tolist())
+        unique_labels.discard(-1)
+
+        if not unique_labels:
+            log.info("ive.clustering.no_clusters_found")
+            return []
+
+        # ── Step 7: Build result dicts ─────────────────────────────────
+        patterns: list[dict[str, Any]] = []
+
+        for cluster_id in sorted(unique_labels):
+            cluster_mask = labels == cluster_id
+            n_in_cluster = int(cluster_mask.sum())
+
+            if n_in_cluster == 0:
+                continue
+
+            # Unscaled feature means → cluster center
+            cluster_center: dict[str, float] = {}
+            for col in numeric_cols:
+                col_values = X_numeric.loc[cluster_mask, col].values.astype(float)
+                col_values = col_values[~np.isnan(col_values)]
+                cluster_center[col] = float(np.mean(col_values)) if len(col_values) > 0 else 0.0
+
+            # Abs-residual statistics
+            cluster_errors = abs_high[cluster_mask]
+            mean_error = float(np.mean(cluster_errors))
+            std_error = float(np.std(cluster_errors, ddof=0)) if len(cluster_errors) > 1 else 0.0
+
+            patterns.append(
+                {
+                    "pattern_type": "cluster",
+                    "cluster_id": int(cluster_id),
+                    "sample_count": n_in_cluster,
+                    "mean_error": mean_error,
+                    "std_error": std_error,
+                    "cluster_center": cluster_center,
+                }
+            )
+
+        # Sort by mean_error descending
+        patterns.sort(key=lambda p: p["mean_error"], reverse=True)
+
+        log.info(
+            "ive.clustering.complete",
+            n_clusters=len(patterns),
+            noise_samples=int((labels == -1).sum()),
+        )
+        return patterns
+
+
+# ---------------------------------------------------------------------------
+# Legacy class kept for backward-compatibility with __init__.py exports.
+# ---------------------------------------------------------------------------
 
 
 class HDBSCANClusterer:
-    """
-    Clusters the residual-feature space using HDBSCAN.
+    """Legacy clusterer for the residual-feature space using HDBSCAN.
 
-    The input is constructed by concatenating normalised residuals with
-    normalised feature values, so that both contribute to cluster shape.
+    Retained for backward compatibility with existing callers and
+    ``__init__.py`` exports.  New callers should use
+    :class:`HDBSCANClustering` instead.
     """
 
     def __init__(
@@ -47,13 +243,6 @@ class HDBSCANClusterer:
         cluster_selection_method: str = "eom",
         metric: str = "euclidean",
     ) -> None:
-        """
-        Args:
-            min_cluster_size: Minimum number of samples to form a cluster.
-            min_samples: Robustness parameter (defaults to min_cluster_size).
-            cluster_selection_method: 'eom' (excess of mass) or 'leaf'.
-            metric: Distance metric for HDBSCAN.
-        """
         self.min_cluster_size = min_cluster_size
         self.min_samples = min_samples or min_cluster_size
         self.cluster_selection_method = cluster_selection_method
@@ -66,29 +255,18 @@ class HDBSCANClusterer:
         feature_matrix: np.ndarray,
         residual_weight: float = 2.0,
     ) -> ClusteringResult:
-        """
-        Fit HDBSCAN on the combined residual-feature space.
+        """Fit HDBSCAN on the combined residual-feature space.
 
         Args:
-            residuals: Shape (n_samples,) — OOF residuals.
-            feature_matrix: Shape (n_samples, n_features) — preprocessed features.
-            residual_weight: Multiplier for residual dimension to boost its
-                influence on cluster formation.
+            residuals:       Shape ``(n_samples,)`` — OOF residuals.
+            feature_matrix:  Shape ``(n_samples, n_features)`` — preprocessed.
+            residual_weight: Multiplier for the residual dimension to boost
+                             its influence on cluster formation.
 
         Returns:
-            ClusteringResult with cluster labels and statistics.
-
-        TODO:
-            - Import hdbscan
-            - Normalise residuals and feature_matrix to zero mean, unit variance
-            - Concatenate: X = np.hstack([residuals_scaled * residual_weight, features_scaled])
-            - self._clusterer = hdbscan.HDBSCAN(min_cluster_size=..., ...)
-            - self._clusterer.fit(X)
-            - labels = self._clusterer.labels_
-            - Compute cluster_stats per cluster (mean residual, std, coverage)
-            - Compute validity_score via hdbscan.validity.validity_index(X, labels)
+            :class:`ClusteringResult` with labels and per-cluster statistics.
         """
-        from sklearn.preprocessing import StandardScaler
+        import hdbscan as _hdbscan
 
         log.info(
             "ive.clustering.fit",
@@ -104,19 +282,17 @@ class HDBSCANClusterer:
         residuals_scaled = StandardScaler().fit_transform(residuals_2d) * residual_weight
         combined = np.hstack([residuals_scaled, features_scaled])
 
-        # TODO: Replace placeholder with actual HDBSCAN
-        # import hdbscan
-        # self._clusterer = hdbscan.HDBSCAN(
-        #     min_cluster_size=self.min_cluster_size,
-        #     min_samples=self.min_samples,
-        #     cluster_selection_method=self.cluster_selection_method,
-        #     metric=self.metric,
-        # )
-        # self._clusterer.fit(combined)
-        # labels = self._clusterer.labels_
+        # Handle remaining NaN/inf after scaling
+        np.nan_to_num(combined, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
 
-        # Placeholder: all noise until implemented
-        labels = np.full(len(residuals), -1, dtype=int)
+        self._clusterer = _hdbscan.HDBSCAN(
+            min_cluster_size=self.min_cluster_size,
+            min_samples=self.min_samples,
+            cluster_selection_method=self.cluster_selection_method,
+            metric=self.metric,
+        )
+        self._clusterer.fit(combined)
+        labels: np.ndarray = self._clusterer.labels_
 
         unique, counts = np.unique(labels[labels >= 0], return_counts=True)
         n_clusters = len(unique)
@@ -128,14 +304,25 @@ class HDBSCANClusterer:
             cluster_stats[int(cid)] = {
                 "size": int(count),
                 "mean_residual": float(np.mean(residuals[mask])),
-                "std_residual": float(np.std(residuals[mask])),
+                "std_residual": float(np.std(residuals[mask], ddof=0)),
                 "coverage_pct": float(count / len(residuals) * 100),
             }
+
+        # Attempt DBCV validity score
+        validity = 0.0
+        if n_clusters >= 2:
+            try:
+                from hdbscan.validity import validity_index
+
+                validity = float(validity_index(combined, labels))
+            except Exception:
+                log.debug("ive.clustering.validity_index_failed")
 
         log.info(
             "ive.clustering.done",
             n_clusters=n_clusters,
             noise_pct=round(noise_fraction * 100, 1),
+            validity=round(validity, 4),
         )
 
         return ClusteringResult(
@@ -143,4 +330,5 @@ class HDBSCANClusterer:
             n_clusters=n_clusters,
             noise_fraction=noise_fraction,
             cluster_stats=cluster_stats,
+            validity_score=validity,
         )
