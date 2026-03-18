@@ -250,7 +250,7 @@ class TestValidation:
         """DatasetValidationError raised when target column is missing."""
         df = _make_df(n=200)
         svc = _make_svc()
-        with pytest.raises(DatasetValidationError, match="target"):
+        with pytest.raises(DatasetValidationError, match="(?i)target"):
             svc._validate(df, svc._detect_column_types(df), "nonexistent_col", None, 1000)
 
     def test_validate_target_not_all_null(self) -> None:

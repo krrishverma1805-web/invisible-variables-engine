@@ -76,6 +76,7 @@ services:
       - .env
     volumes:
       - ./src:/app/src
+      - ./tests:/app/tests
       -  ./alembic:/app/alembic
       - artifact_data:/app/artifacts
     ports:
@@ -113,6 +114,7 @@ services:
       - .env
     volumes:
       - ./src:/app/src
+      - ./tests:/app/tests
       - artifact_data:/app/artifacts
     depends_on:
       postgres:

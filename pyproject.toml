@@ -129,7 +129,11 @@ ignore = [
     "ANN401", # Dynamically typed expressions (Any) are disallowed
     "ANN003", # Missing type annotation for **kwargs
     "S101",   # Use of assert (needed in tests)
-    "B008",   # Do not perform function calls in default arguments
+    "B008",
+    "N802",  # Allow capital X in ML functions
+    "N803",  # Allow capital X in ML args
+    "N806",  # Allow capital X in ML vars
+    "N817",  # Allow acronym imports   # Do not perform function calls in default arguments
     "N803",   # Argument name should be lowercase
     "N806",   # Variable name should be lowercase
     "B904",   # Within an except clause, raise exceptions with raise ... from err

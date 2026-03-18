@@ -92,21 +92,24 @@ class XGBoostIVEModel(IVEModel):
         return self._model.predict(X)  # type: ignore[no-any-return]
 
     def get_feature_importance(self) -> dict[str, float]:
-        """
-        Return XGBoost's built-in feature importance (gain-based).
+        """Get feature importances (weight/gain) sorted descending."""
+        # Safely get the underlying model object (handles both self.model and self._model)
+        model_obj = getattr(self, "model", getattr(self, "_model", None))
 
-        TODO:
-            - Use self._model.get_booster().get_score(importance_type='gain')
-            - Normalise to sum to 1.0
-        """
-        if not self._fitted or self._model is None:
+        if model_obj is None or not hasattr(model_obj, "feature_importances_"):
             return {}
-        raw = self._model.feature_importances_
-        total = raw.sum()
-        if total == 0:
-            return {}
-        names = self._feature_names or [f"f{i}" for i in range(len(raw))]
-        return dict(zip(names, (raw / total).tolist(), strict=False))
+
+        raw_importances = model_obj.feature_importances_
+
+        # Safely get feature names
+        names = getattr(self, "feature_names_in_", getattr(self, "_feature_names_in", None))
+        if names is None:
+            names = [f"feature_{i}" for i in range(len(raw_importances))]
+
+        imp_dict = {
+            str(name): float(imp) for name, imp in zip(names, raw_importances, strict=False)
+        }
+        return dict(sorted(imp_dict.items(), key=lambda item: item[1], reverse=True))
 
     def get_shap_values(self, X: np.ndarray) -> np.ndarray:
         """

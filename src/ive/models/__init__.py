@@ -3,7 +3,7 @@
 from ive.models.base_model import IVEModel
 from ive.models.cross_validator import CrossValidator, CVResult
 from ive.models.linear_model import LinearIVEModel
-from ive.models.residual_analyzer import ResidualAnalyzer
+from ive.models.residual_analyzer import ResidualAnalysis, ResidualAnalyzer
 from ive.models.xgboost_model import XGBoostIVEModel
 
 __all__ = [
@@ -13,4 +13,5 @@ __all__ = [
     "CrossValidator",
     "CVResult",
     "ResidualAnalyzer",
+    "ResidualAnalysis",
 ]
