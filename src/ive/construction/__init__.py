@@ -1,14 +1,10 @@
-"""Construction layer package — synthesis, bootstrap validation, causal checks, explanations."""
+"""Phase 4: Latent Variable Construction & Validation."""
 
-from ive.construction.bootstrap_validator import BootstrapResult, BootstrapValidator
-from ive.construction.causal_checker import CausalChecker
-from ive.construction.explanation_generator import ExplanationGenerator
-from ive.construction.variable_synthesizer import VariableSynthesizer
+from ive.construction.bootstrap_validator import BootstrapValidator
+from ive.construction.variable_synthesizer import VariableSynthesizer, apply_construction_rule
 
 __all__ = [
     "VariableSynthesizer",
+    "apply_construction_rule",
     "BootstrapValidator",
-    "BootstrapResult",
-    "CausalChecker",
-    "ExplanationGenerator",
 ]

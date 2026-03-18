@@ -1,10 +1,7 @@
-"""
-IVE Core Package — Main Orchestration Engine.
+"""IVE Core Orchestration."""
 
-Exports: IVEEngine, PipelineContext, EngineResult
-"""
+from ive.core.phase_model import PhaseModel
 
-from ive.core.engine import IVEEngine
-from ive.core.pipeline import EngineResult, PipelineContext
-
-__all__ = ["IVEEngine", "PipelineContext", "EngineResult"]
+__all__ = [
+    "PhaseModel",
+]
