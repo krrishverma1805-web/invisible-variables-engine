@@ -6,7 +6,7 @@
 
 x-common-env: &common-env
   DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-ive}:${POSTGRES_PASSWORD:-ivepassword}@postgres:5432/${POSTGRES_DB:-ive_db}
-  REDIS_URL: redis://redis:6379/0
+  REDIS_URL: redis://:redispassword@redis:6379/0
   SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
   ENV: ${ENV:-development}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
