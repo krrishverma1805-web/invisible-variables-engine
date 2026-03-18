@@ -30,6 +30,8 @@ from ive.api.v1.schemas.experiment_schemas import (
     ExperimentProgressResponse,
     ExperimentResponse,
 )
+from ive.db.models import Experiment
+from ive.db.repositories.experiment_repo import ExperimentRepository
 from ive.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -120,7 +122,7 @@ async def delete_experiment(
 ):
     """Delete experiment. Returns 204 on success."""
 
-    repo = ExperimentRepository(db)
+    repo = ExperimentRepository(db, Experiment)
     experiment = await repo.get_by_id(experiment_id)
 
     if not experiment:

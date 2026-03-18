@@ -250,7 +250,7 @@ def _get_dataset_validation_error() -> type:
         return DatasetValidationError
     except ImportError:
         # Fallback: a dummy class that will never match
-        class _Dummy(Exception):
+        class _DummyError(Exception):
             pass
 
-        return _Dummy
+        return _DummyError

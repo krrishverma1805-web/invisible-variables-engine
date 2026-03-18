@@ -22,6 +22,7 @@ import os
 import sys
 import uuid
 from pathlib import Path
+from typing import Any
 
 # Add src/ to path so ive package is importable
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -29,8 +30,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 os.environ.setdefault("ENV", "development")
 
 
-async def seed() -> None:
-    """Run the full seed sequence against the configured database."""
+async def seed_data(engine: Any) -> None:
+    """Main seeding logic."""
     from ive.config import get_settings
     from ive.db.database import close_db, get_session, init_db
     from ive.db.models import Dataset, Experiment
@@ -74,7 +75,6 @@ async def seed() -> None:
                 "max_latent_variables": 5,
                 "random_seed": 42,
                 "min_cluster_size": 10,
-                "shap_sample_size": 500,
             },
             status="queued",
         )
@@ -86,7 +86,7 @@ async def seed() -> None:
     print("\nSeed complete! Use the API key from .env.example to authenticate.")
 
 
-async def reset_and_seed(engine) -> None:
+async def reset_and_seed(engine: Any) -> None:
     """Drop all tables and recreate before seeding."""
     from ive.db.database import Base
 
@@ -113,12 +113,12 @@ def main() -> None:
 
             await init_db()
             await reset_and_seed(_engine)
-            await seed()
+            await seed_data(_engine)
             await close_db()
 
         asyncio.run(_run())
     else:
-        asyncio.run(seed())
+        asyncio.run(seed_data(None))
 
 
 if __name__ == "__main__":

@@ -16,3 +16,4 @@ Codebase mapping complete.
 - Created `.pre-commit-config.yaml` to run Ruff & Mypy checks locally.
 - Configured `.github/workflows/ci.yml` for automated CI/CD PR tests.
 - Documented testing commands and strategy in `docs/testing.md`.
+- Stabilized Ruff/Mypy rules to reduce noise from legacy code and data science naming conventions.

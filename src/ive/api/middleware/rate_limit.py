@@ -58,7 +58,7 @@ def setup_rate_limiter(app: FastAPI) -> None:
         app: The FastAPI application instance.
     """
     try:
-        from slowapi import Limiter, _rate_limit_exceeded_handler
+        from slowapi import Limiter
         from slowapi.errors import RateLimitExceeded
     except ImportError:
         log.warning(

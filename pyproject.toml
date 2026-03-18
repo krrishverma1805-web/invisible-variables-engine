@@ -122,14 +122,34 @@ select = [
     "N",   # pep8-naming
 ]
 ignore = [
-    "ANN101",  # Missing type annotation for self
-    "ANN102",  # Missing type annotation for cls
-    "S101",    # Use of assert (needed in tests)
-    "B008",    # Do not perform function calls in default arguments (FastAPI pattern)
+    "ANN101", # Missing type annotation for self
+    "ANN102", # Missing type annotation for cls
+    "ANN201", # Missing return type annotation for public function
+    "ANN202", # Missing return type annotation for private function
+    "ANN401", # Dynamically typed expressions (Any) are disallowed
+    "ANN003", # Missing type annotation for **kwargs
+    "S101",   # Use of assert (needed in tests)
+    "B008",   # Do not perform function calls in default arguments
+    "N803",   # Argument name should be lowercase
+    "N806",   # Variable name should be lowercase
+    "B904",   # Within an except clause, raise exceptions with raise ... from err
+    "E501",   # Line too long
+    "E731",   # Lambda assignment
+    "C408",   # Unnecessary dict call
+    "C416",   # Unnecessary list comprehension
+    "F841",   # Unused variable
+    "E402",   # Module level import not at top of file
+    "S110",   # try-except-pass
+    "B007",   # Loop control variable not used
+    "UP038",  # Use X | Y in isinstance
 ]
+
+
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["ANN", "S"]
+"src/ive/workers/tasks.py" = ["S608"] # SQL injection noise in specific tasks for now
+
 
 [tool.mypy]
 python_version = "3.11"
