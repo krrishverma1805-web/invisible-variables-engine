@@ -1,8 +1,9 @@
 """
 Experiment API Schemas — Invisible Variables Engine.
 
-STUB — Phase 2.  Defines the shape of experiment request/response models.
-Endpoints are not yet implemented.
+Pydantic v2 schemas for all experiment-related request/response models.
+All ORM-backed schemas use ``model_config = ConfigDict(from_attributes=True)``
+so they can be constructed directly from SQLAlchemy model instances.
 """
 
 from __future__ import annotations
@@ -13,48 +14,64 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# ---------------------------------------------------------------------------
+# Config (embedded in create request and stored as config_json)
+# ---------------------------------------------------------------------------
+
 
 class ExperimentConfig(BaseModel):
-    """Configuration for a single IVE experiment run.
+    """Configuration for a single IVE experiment run."""
 
-    TODO: implement full validation in Phase 2.
-    """
-
-    # Model config
     model_types: list[str] = Field(
         default=["linear", "xgboost"],
-        description="Model types to train (linear, xgboost, lightgbm).",
+        description="Model types to train (linear, xgboost).",
     )
-    n_cv_folds: int = Field(default=5, ge=2, le=20)
+    cv_folds: int = Field(default=5, ge=2, le=20, alias="n_cv_folds")
     test_size: float = Field(default=0.2, gt=0.0, lt=1.0)
     random_seed: int = Field(default=42)
 
-    # Detection thresholds
     min_subgroup_size: int = Field(default=30)
     significance_level: float = Field(default=0.05)
     effect_size_threshold: float = Field(default=0.3)
 
-    # Bootstrap validation
-    n_bootstrap_iterations: int = Field(default=100)
+    bootstrap_iterations: int = Field(default=50, ge=10, le=500, alias="n_bootstrap_iterations")
     bootstrap_presence_threshold: float = Field(default=0.7)
 
-    # Feature limits
     max_features: int = Field(default=100)
     shap_sample_size: int = Field(default=500)
 
+    model_config = ConfigDict(populate_by_name=True)
 
-class ExperimentCreateRequest(BaseModel):
-    """Request body for creating a new experiment."""
+
+# ---------------------------------------------------------------------------
+# Request schemas
+# ---------------------------------------------------------------------------
+
+
+class ExperimentCreate(BaseModel):
+    """Request body for POST /experiments/."""
 
     dataset_id: UUID
-    config: ExperimentConfig = Field(default_factory=ExperimentConfig)
+    config: dict[str, Any] = Field(
+        default_factory=lambda: {
+            "model_types": ["linear", "xgboost"],
+            "cv_folds": 5,
+            "bootstrap_iterations": 50,
+        }
+    )
+
+
+# Keep legacy name so existing import in experiments.py stub still works
+ExperimentCreateRequest = ExperimentCreate
+
+
+# ---------------------------------------------------------------------------
+# Response schemas
+# ---------------------------------------------------------------------------
 
 
 class ExperimentResponse(BaseModel):
-    """Full experiment detail response.
-
-    TODO: implement in Phase 2.
-    """
+    """Full experiment detail — maps directly from the Experiment ORM model."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -62,13 +79,22 @@ class ExperimentResponse(BaseModel):
     dataset_id: UUID
     status: str
     progress_pct: int
-    current_stage: str | None
-    error_message: str | None
-    celery_task_id: str | None
+    current_stage: str | None = None
+    error_message: str | None = None
+    celery_task_id: str | None = None
     config_json: dict[str, Any]
     created_at: datetime
-    started_at: datetime | None
-    completed_at: datetime | None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+class ExperimentCreateResponse(BaseModel):
+    """Minimal 201 Created response body."""
+
+    id: UUID
+    status: str
+    celery_task_id: str | None = None
+    message: str
 
 
 class ExperimentListResponse(BaseModel):
@@ -80,18 +106,35 @@ class ExperimentListResponse(BaseModel):
     limit: int
 
 
-class ExperimentCreateResponse(BaseModel):
-    """Minimal response on experiment creation (202 Accepted)."""
-
-    id: UUID
-    status: str
-    message: str
-
-
 class ExperimentProgressResponse(BaseModel):
-    """Lightweight progress-poll response."""
+    """Lightweight progress-poll response for WebSocket/polling clients."""
+
+    model_config = ConfigDict(from_attributes=True)
 
     id: UUID
     status: str
     progress_pct: int
-    current_stage: str | None
+    current_stage: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Error pattern response
+# ---------------------------------------------------------------------------
+
+
+class ErrorPatternResponse(BaseModel):
+    """A statistically significant pattern discovered in the residuals."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    experiment_id: UUID
+    pattern_type: str
+    subgroup_definition: dict[str, Any]
+    effect_size: float
+    p_value: float
+    adjusted_p_value: float
+    sample_count: int
+    mean_residual: float
+    std_residual: float
+    created_at: datetime

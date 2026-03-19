@@ -2,26 +2,30 @@
 Celery Task Definitions — Invisible Variables Engine.
 
 All tasks are **synchronous** (Celery runs them in a regular thread/process).
-Database operations use psycopg2 directly (sync driver) to avoid the overhead
-of spinning up an asyncio event loop per task.
+The main experiment task bridges into async land via :func:`asyncio.run` to
+use the async SQLAlchemy session required by ``IVEPipeline``.  The remaining
+tasks (``profile_dataset``, ``cancel_experiment``, ``health_check_task``)
+use psycopg2 directly for lightweight DB updates that don't need ORM features.
 
 Tasks
 -----
-run_experiment      — Full 4-phase IVE pipeline skeleton
+run_experiment      — Full 4-phase IVE pipeline
 profile_dataset     — Post-upload dataset profiling (triggered after upload)
 cancel_experiment   — Revoke a running task + mark DB as cancelled
 health_check_task   — Worker liveness probe (returns immediately)
 
 Progress reporting
 ------------------
-run_experiment calls ``self.update_state(state='PROGRESS', meta={...})``
+``run_experiment`` calls ``self.update_state(state='PROGRESS', meta={...})``
 so the WebSocket endpoint can poll ``celery_app.AsyncResult(task_id).info``.
 """
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from typing import Any
+from uuid import UUID
 
 import structlog
 from celery import Task
@@ -43,7 +47,6 @@ def _get_sync_conn():
     from ive.config import get_settings
 
     settings = get_settings()
-    # sync_database_url is "postgresql://..." (not asyncpg)
     dsn = settings.sync_database_url.replace("postgresql+psycopg2://", "postgresql://")
     return psycopg2.connect(dsn)
 
@@ -109,7 +112,6 @@ def _update_experiment(
                 (status, now, experiment_id),
             )
         else:
-            # Generic update — at least update progress/stage if supplied
             sets = ["status = %s"]
             params: list[Any] = [status]
             if progress_pct is not None:
@@ -209,6 +211,33 @@ class BaseIVETask(Task):
 
 
 # ---------------------------------------------------------------------------
+# Async pipeline bridge
+# ---------------------------------------------------------------------------
+
+
+async def _run_pipeline_async(experiment_id: str) -> dict[str, Any]:
+    """Async helper that sets up a DB session and runs ``IVEPipeline``.
+
+    This function is the bridge between the synchronous Celery task world
+    and the async SQLAlchemy ORM used by ``IVEPipeline``.
+
+    Args:
+        experiment_id: String UUID of the experiment.
+
+    Returns:
+        Summary dict returned by :meth:`IVEPipeline.run_experiment`.
+    """
+    from ive.core.pipeline import IVEPipeline
+    from ive.db.database import get_db_session
+    from ive.storage.artifact_store import get_artifact_store
+
+    store = get_artifact_store()
+    async with get_db_session() as session:
+        pipeline = IVEPipeline(session, store)
+        return await pipeline.run_experiment(UUID(experiment_id))
+
+
+# ---------------------------------------------------------------------------
 # Task 1: run_experiment
 # ---------------------------------------------------------------------------
 
@@ -220,6 +249,7 @@ class BaseIVETask(Task):
     max_retries=1,
     default_retry_delay=60,
     queue="analysis",
+    acks_late=True,
 )
 def run_experiment(
     self: Task,
@@ -230,19 +260,26 @@ def run_experiment(
 
     Phases
     ------
-    1. understand  — data profiling + validation + preprocessing
-    2. model       — train Linear + XGBoost via k-fold CV, collect residuals
-    3. detect      — subgroup / cluster / SHAP / temporal analysis
-    4. construct   — synthesise, bootstrap-validate, and explain latent variables
+    1. understand  — data loading, schema filtering, X/y split
+    2. model       — train Linear + XGBoost via k-fold CV, collect OOF residuals
+    3. detect      — subgroup KS-scan + HDBSCAN clustering
+    4. construct   — synthesise, bootstrap-validate, and persist latent variables
 
-    Each phase updates the DB row so the polling WebSocket reflects live state.
+    The Celery task is synchronous; it bridges to async code via
+    :func:`asyncio.run`.  Progress is written to both the DB row and the
+    Celery task state so the WebSocket polling endpoint stays up to date.
 
     Args:
         experiment_id: String UUID of the experiment row.
-        config:        Serialised :class:`ExperimentConfig` dict.
+        config:        Serialised experiment config dict (informational — the
+                       pipeline reads authoritative config from the DB row).
 
     Returns:
-        Summary dict: experiment_id, status, elapsed_seconds.
+        Summary dict: experiment_id, status, elapsed_seconds, n_latent_variables.
+
+    Raises:
+        Exception: Any unhandled pipeline error.  The ``BaseIVETask.on_failure``
+                   hook marks the experiment as ``"failed"`` automatically.
     """
     import time
 
@@ -251,65 +288,37 @@ def run_experiment(
 
     def _progress(pct: int, stage: str) -> None:
         self.update_state(state="PROGRESS", meta={"progress": pct, "stage": stage})
-        _update_experiment(
-            experiment_id,
-            "running",
-            progress_pct=pct,
-            current_stage=stage,
-        )
+        _update_experiment(experiment_id, "running", progress_pct=pct, current_stage=stage)
 
     try:
-        # ── Fetch experiment row from DB ─────────────────────────────
+        # Verify experiment exists before handing off to the async pipeline.
         exp = _get_experiment(experiment_id)
         if exp is None:
             raise ValueError(f"Experiment {experiment_id} not found in DB.")
 
-        _update_experiment(experiment_id, "running", progress_pct=0, current_stage="starting")
+        _progress(0, "starting")
+        log.info("task.pipeline.starting", experiment_id=experiment_id)
 
-        # ── Phase 1: Understand ──────────────────────────────────────
-        _progress(5, "understand")
-        log.info("task.phase.understand", experiment_id=experiment_id)
-        # TODO: from ive.core.phase_understand import run_understand_phase
-        # profile, validated_df = run_understand_phase(exp["file_path"], config)
-        _progress(20, "understand")
+        # Delegate all four phases to the async IVEPipeline.
+        # asyncio.run() creates a fresh event loop for this sync Celery context.
+        result = asyncio.run(_run_pipeline_async(experiment_id))
 
-        # ── Phase 2: Model ───────────────────────────────────────────
-        _progress(25, "model")
-        log.info("task.phase.model", experiment_id=experiment_id)
-        # TODO: from ive.core.phase_model import run_model_phase
-        # residuals, trained_models = run_model_phase(validated_df, config)
-        _progress(55, "model")
-
-        # ── Phase 3: Detect ──────────────────────────────────────────
-        _progress(58, "detect")
-        log.info("task.phase.detect", experiment_id=experiment_id)
-        # TODO: from ive.core.phase_detect import run_detect_phase
-        # patterns = run_detect_phase(residuals, validated_df, config)
-        _progress(80, "detect")
-
-        # ── Phase 4: Construct ───────────────────────────────────────
-        _progress(83, "construct")
-        log.info("task.phase.construct", experiment_id=experiment_id)
-        # TODO: from ive.core.phase_construct import run_construct_phase
-        # latent_vars = run_construct_phase(patterns, config)
-        # _store_latent_variables(experiment_id, latent_vars)
-        n_latent_variables = 0  # Will be len(latent_vars) once implemented
-        _progress(98, "construct")
-
-        # ── Done ─────────────────────────────────────────────────────
-        _update_experiment(experiment_id, "completed")
         elapsed = round(time.perf_counter() - t_start, 2)
+        n_latent = result.get("n_validated", 0)
+
         log.info(
             "task.run_experiment.done",
             experiment_id=experiment_id,
             elapsed_seconds=elapsed,
-            n_latent_variables=n_latent_variables,
+            n_latent_variables=n_latent,
         )
+
         return {
             "experiment_id": experiment_id,
             "status": "completed",
             "elapsed_seconds": elapsed,
-            "n_latent_variables": n_latent_variables,
+            "n_latent_variables": n_latent,
+            "n_patterns": result.get("n_patterns", 0),
         }
 
     except Exception as exc:
@@ -320,7 +329,9 @@ def run_experiment(
             exc_info=True,
         )
         _update_experiment(experiment_id, "failed", error_message=str(exc))
-        raise self.retry(exc=exc) if self.request.retries < self.max_retries else exc
+        if self.request.retries < self.max_retries:
+            raise self.retry(exc=exc)
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -342,8 +353,7 @@ def profile_dataset(dataset_id: str, file_path: str) -> dict[str, Any]:
     Steps:
         1. Load file (CSV or Parquet) into a Pandas DataFrame.
         2. Run :class:`~ive.data.profiler.DataProfiler` → quality metrics.
-        3. Save profile JSON to the artifact store.
-        4. Update ``schema_json`` on the ``Dataset`` DB row.
+        3. Merge results into ``schema_json`` on the ``Dataset`` DB row.
 
     Args:
         dataset_id: String UUID of the dataset row.
@@ -359,14 +369,13 @@ def profile_dataset(dataset_id: str, file_path: str) -> dict[str, Any]:
     log.info("task.profile_dataset.start", dataset_id=dataset_id, file_path=file_path)
 
     try:
-        # ── Load data ────────────────────────────────────────────────
         if file_path.endswith((".parquet", ".pq")):
             df = pd.read_parquet(file_path)
         else:
             df = pd.read_csv(file_path)
 
-        # ── Fetch target_column from DB ───────────────────────────────
-        target_col = "target"  # default fallback
+        target_col = "target"
+        existing_schema: dict = {}
         conn = _get_sync_conn()
         try:
             cur = conn.cursor()
@@ -377,17 +386,15 @@ def profile_dataset(dataset_id: str, file_path: str) -> dict[str, Any]:
             row = cur.fetchone()
             if row:
                 target_col = row[0]
-                existing_schema: dict = row[1] or {}
+                existing_schema = row[1] or {}
         finally:
             conn.close()
 
-        # ── Profile ───────────────────────────────────────────────────
         from ive.data.profiler import DataProfiler
 
         profiler = DataProfiler()
         profile = profiler.profile(df, target_column=target_col, dataset_id=dataset_id)
 
-        # ── Merge into schema_json ────────────────────────────────────
         existing_schema.update(
             {
                 "quality_score": profile.quality_score,
@@ -398,7 +405,6 @@ def profile_dataset(dataset_id: str, file_path: str) -> dict[str, Any]:
             }
         )
 
-        # ── Update DB ─────────────────────────────────────────────────
         conn = _get_sync_conn()
         try:
             cur = conn.cursor()
@@ -454,10 +460,8 @@ def cancel_experiment(task_id: str, experiment_id: str) -> dict[str, Any]:
     """
     log.info("task.cancel", task_id=task_id, experiment_id=experiment_id)
 
-    # Revoke the target task
     celery_app.control.revoke(task_id, terminate=True, signal="SIGTERM")
 
-    # Update DB
     try:
         _update_experiment(experiment_id, "cancelled")
     except Exception as exc:

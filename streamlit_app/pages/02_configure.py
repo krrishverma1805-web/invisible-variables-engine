@@ -1,38 +1,113 @@
-"""
-Page 2 — Configure Experiment.
+import os
 
-Lets users select a dataset and configure experiment parameters before launching.
-"""
-
-from __future__ import annotations
-
+import requests
 import streamlit as st
 
-st.set_page_config(page_title="Configure Experiment — IVE", layout="wide")
+st.set_page_config(
+    page_title="Configure Experiment - IVE",
+    page_icon="⚙️",
+    layout="wide",
+)
+
+API_BASE = os.getenv("API_BASE_URL", "http://api:8000")
+HEADERS = {"X-API-Key": "dev-key-1"}
+
 st.title("⚙️ Configure Experiment")
+st.markdown("Set up a new Invisible Variables Engine analysis.")
 
-# TODO: Fetch datasets from GET /api/v1/datasets and populate selector
-dataset_id = st.selectbox("Select Dataset", options=["(No datasets loaded — upload one first)"])
+# --- Fetch Datasets ---
+datasets_dict = {}
+try:
+    response = requests.get(f"{API_BASE}/api/v1/datasets/", headers=HEADERS, timeout=5)
+    if response.ok:
+        data = response.json()
+        for ds in data.get("datasets", []):
+            label = f"{ds['name']} (Target: {ds['target_column']})"
+            datasets_dict[label] = ds["id"]
+except requests.RequestException:
+    st.error("Could not connect to the API to fetch datasets.")
 
-st.markdown("---")
-st.subheader("Model Configuration")
+if not datasets_dict:
+    st.warning("No datasets available. Please upload a dataset first.")
+    st.page_link("pages/01_upload.py", label="Go to Upload Dataset", icon="📂")
+    st.stop()
 
-col1, col2, col3 = st.columns(3)
-with col1:
-    model_types = st.multiselect(
-        "Model Types", options=["linear", "xgboost"], default=["linear", "xgboost"]
-    )
-    cv_folds = st.slider("CV Folds", min_value=2, max_value=10, value=5)
-with col2:
-    min_cluster_size = st.number_input("Min Cluster Size", min_value=5, value=10)
-    shap_sample_size = st.number_input("SHAP Sample Size", min_value=50, value=500)
-with col3:
-    max_latent_vars = st.slider("Max Latent Variables", min_value=1, max_value=20, value=5)
-    random_seed = st.number_input("Random Seed", value=42)
+# --- Configuration Form ---
+with st.form("config_form"):
+    st.subheader("Select Dataset")
+    selected_label = st.selectbox("Dataset to analyze", list(datasets_dict.keys()))
+    dataset_id = datasets_dict[selected_label]
 
-exp_name = st.text_input("Experiment Name", placeholder="e.g. Housing v1")
+    st.divider()
 
-if st.button("▶️ Start Experiment", type="primary"):
-    with st.spinner("Queuing experiment..."):
-        # TODO: POST /api/v1/experiments with config payload
-        st.success("Experiment queued! Navigate to **Monitor Progress** to track it.")
+    st.subheader("Model Selection")
+    col1, col2 = st.columns(2)
+    with col1:
+        use_linear = st.checkbox(
+            "Linear Model", value=True, help="Train a Ridge regression/classification baseline."
+        )
+    with col2:
+        use_xgboost = st.checkbox(
+            "XGBoost Model", value=True, help="Train a non-linear XGBoost model."
+        )
+
+    st.divider()
+
+    st.subheader("Analysis Parameters")
+    col3, col4 = st.columns(2)
+    with col3:
+        cv_folds = st.slider(
+            "Cross-Validation Folds",
+            min_value=3,
+            max_value=10,
+            value=5,
+            help="Number of folds for out-of-fold residual generation.",
+        )
+    with col4:
+        bootstrap_iters = st.slider(
+            "Bootstrap Iterations",
+            min_value=10,
+            max_value=100,
+            value=50,
+            step=10,
+            help="Iterations for stability validation.",
+        )
+
+    submitted = st.form_submit_button("Run Experiment", type="primary")
+
+if submitted:
+    model_types = []
+    if use_linear:
+        model_types.append("linear")
+    if use_xgboost:
+        model_types.append("xgboost")
+
+    if not model_types:
+        st.error("Please select at least one model type.")
+    else:
+        with st.spinner("Queueing experiment..."):
+            payload = {
+                "dataset_id": dataset_id,
+                "config": {
+                    "model_types": model_types,
+                    "cv_folds": cv_folds,
+                    "bootstrap_iterations": bootstrap_iters,
+                },
+            }
+
+            try:
+                response = requests.post(
+                    f"{API_BASE}/api/v1/experiments/", headers=HEADERS, json=payload, timeout=5
+                )
+                if response.ok:
+                    res_data = response.json()
+                    exp_id = res_data.get("id")
+                    st.success(f"Experiment queued successfully! ID: {exp_id}")
+                    # Store experiment ID in session state for the monitor page
+                    st.session_state["active_experiment_id"] = exp_id
+                    st.info("Head over to the Monitor page to see progress.")
+                    st.page_link("pages/03_monitor.py", label="Monitor Progress", icon="⏳")
+                else:
+                    st.error(f"Failed to queue experiment: {response.text}")
+            except requests.RequestException as e:
+                st.error(f"Connection error: {str(e)}")

@@ -134,7 +134,8 @@ ignore = [
     "N803",  # Allow capital X in ML args
     "N806",  # Allow capital X in ML vars
     "N817",  # Allow acronym imports
-    "S112",  # Allow silent continues in stat loops   # Do not perform function calls in default arguments
+    "S112",  # Allow silent continues in stat loops
+    "S113",  # Allow requests without explicit timeout in Streamlit UI   # Do not perform function calls in default arguments
     "N803",   # Argument name should be lowercase
     "N806",   # Variable name should be lowercase
     "B904",   # Within an except clause, raise exceptions with raise ... from err
