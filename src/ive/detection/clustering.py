@@ -179,7 +179,13 @@ class HDBSCANClustering:
             log.info("ive.clustering.no_clusters_found")
             return []
 
-        # ── Step 7: Build result dicts ─────────────────────────────────
+        # ── Step 7: Build result dicts with hardened acceptance ────────
+        #
+        # Compute global mean error across the entire high-error subset.
+        # Only keep clusters that show a *meaningful* uplift vs the
+        # global error baseline — this eliminates noise-derived clusters.
+        # -----------------------------------------------------------------
+        global_mean_error = float(np.mean(abs_high))
         patterns: list[dict[str, Any]] = []
 
         for cluster_id in sorted(unique_labels):
@@ -189,6 +195,16 @@ class HDBSCANClustering:
             if n_in_cluster == 0:
                 continue
 
+            # Gate 1: minimum cluster size
+            if n_in_cluster < min_cluster_size:
+                log.debug(
+                    "ive.clustering.reject_small",
+                    cluster_id=cluster_id,
+                    size=n_in_cluster,
+                    min_size=min_cluster_size,
+                )
+                continue
+
             # Unscaled feature means → cluster center
             cluster_center: dict[str, float] = {}
             for col in numeric_cols:
@@ -196,10 +212,50 @@ class HDBSCANClustering:
                 col_values = col_values[~np.isnan(col_values)]
                 cluster_center[col] = float(np.mean(col_values)) if len(col_values) > 0 else 0.0
 
+            # Gate 5: non-empty center
+            if not cluster_center:
+                log.debug(
+                    "ive.clustering.reject_empty_center",
+                    cluster_id=cluster_id,
+                )
+                continue
+
             # Abs-residual statistics
             cluster_errors = abs_high[cluster_mask]
             mean_error = float(np.mean(cluster_errors))
             std_error = float(np.std(cluster_errors, ddof=0)) if len(cluster_errors) > 1 else 0.0
+
+            # Gate 2: cluster must outperform global baseline
+            if mean_error <= global_mean_error:
+                log.debug(
+                    "ive.clustering.reject_below_global",
+                    cluster_id=cluster_id,
+                    mean_error=round(mean_error, 4),
+                    global_mean_error=round(global_mean_error, 4),
+                )
+                continue
+
+            # Gate 3: error_lift >= 1.10
+            error_lift = mean_error / max(global_mean_error, 1e-9)
+            if error_lift < 1.10:
+                log.debug(
+                    "ive.clustering.reject_low_lift",
+                    cluster_id=cluster_id,
+                    error_lift=round(error_lift, 4),
+                )
+                continue
+
+            # Gate 4: minimum absolute difference
+            abs_diff = mean_error - global_mean_error
+            min_abs_diff = max(0.01, 0.05 * global_mean_error)
+            if abs_diff < min_abs_diff:
+                log.debug(
+                    "ive.clustering.reject_small_diff",
+                    cluster_id=cluster_id,
+                    abs_diff=round(abs_diff, 4),
+                    min_abs_diff=round(min_abs_diff, 4),
+                )
+                continue
 
             patterns.append(
                 {
@@ -209,16 +265,19 @@ class HDBSCANClustering:
                     "mean_error": mean_error,
                     "std_error": std_error,
                     "cluster_center": cluster_center,
+                    "error_lift": round(error_lift, 4),
+                    "global_mean_error": round(global_mean_error, 4),
                 }
             )
 
-        # Sort by mean_error descending
-        patterns.sort(key=lambda p: p["mean_error"], reverse=True)
+        # Sort by mean_error descending, then sample_count descending
+        patterns.sort(key=lambda p: (-p["mean_error"], -p["sample_count"]))
 
         log.info(
             "ive.clustering.complete",
             n_clusters=len(patterns),
             noise_samples=int((labels == -1).sum()),
+            global_mean_error=round(global_mean_error, 4),
         )
         return patterns
 

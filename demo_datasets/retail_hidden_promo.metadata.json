@@ -1,0 +1,9 @@
+{
+  "dataset_name": "retail_hidden_promo",
+  "target_column": "spend_amount",
+  "hidden_variable_name": "premium_promo_eligibility",
+  "hidden_rule": "loyalty_score > 0.8 AND basket_size > 8 \u2192 +120 spend",
+  "affected_pct": 8.7,
+  "expected_detection_type": "subgroup",
+  "notes": "The premium promo uplift is massive relative to baseline spend. IVE should identify loyalty_score (high quantile) and/or basket_size (high bin) as statistically significant subgroups."
+}

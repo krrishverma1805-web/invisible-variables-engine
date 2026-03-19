@@ -1,0 +1,9 @@
+{
+  "dataset_name": "delivery_hidden_weather",
+  "target_column": "delivery_time",
+  "hidden_variable_name": "storm_delay_zone",
+  "hidden_rule": "distance_miles > 10 AND traffic_index > 7.5 \u2192 +25 minutes",
+  "affected_pct": 19.5,
+  "expected_detection_type": "subgroup",
+  "notes": "The hidden storm-delay zone creates a bimodal residual distribution. IVE should detect a subgroup on distance_miles (high bin) or traffic_index (high bin) with a large KS statistic."
+}

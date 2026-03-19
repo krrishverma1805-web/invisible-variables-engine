@@ -1,0 +1,9 @@
+{
+  "dataset_name": "manufacturing_hidden_shift",
+  "target_column": "defect_rate",
+  "hidden_variable_name": "night_shift_instability",
+  "hidden_rule": "vibration > 7 AND humidity > 75 \u2192 +0.12 defect rate",
+  "affected_pct": 10.7,
+  "expected_detection_type": "subgroup",
+  "notes": "The defect rate spike is ~6\u00d7 the baseline noise level, making it highly detectable. IVE should identify vibration (high bin) and humidity (high bin) as significant subgroups."
+}

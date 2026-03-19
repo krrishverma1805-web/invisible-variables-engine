@@ -1,69 +1,66 @@
 # Invisible Variables Engine
 
-> **Status:** 🚧 Active Development — v0.1.0 (Alpha)
+**Discover what your model can't see.**
 
-A production-grade data science system that discovers **hidden latent variables** in datasets by analysing systematic model prediction errors. The engine runs a four-phase pipeline (Understand → Model → Detect → Construct) and surfaces explanations of _why_ a model consistently fails on certain subgroups.
-
----
-
-## Table of Contents
-
-- [Architecture](#architecture)
-- [Quick Start](#quick-start)
-- [Development](#development)
-- [API Reference](#api-reference)
-- [Testing](#testing)
-- [Configuration](#configuration)
-- [Contributing](#contributing)
+The Invisible Variables Engine (IVE) is a production-grade machine learning platform that automatically discovers hidden latent variables in tabular datasets. It works by training baseline models, analyzing systematic patterns in prediction errors, and constructing new variables that capture unmeasured conditions — factors your data does not explicitly record but that measurably influence outcomes.
 
 ---
 
-## Architecture
+## Key Features
+
+- **Automated Latent Variable Discovery** — upload a CSV, specify a target, and IVE handles the rest: profiling, modeling, residual analysis, pattern detection, variable synthesis, and statistical validation.
+- **Out-of-Fold Residual Analysis** — K-fold cross-validation ensures residual patterns reflect genuine model blind spots, not training artifacts.
+- **Subgroup & Cluster Detection** — Bonferroni-corrected KS tests identify feature-value subgroups with anomalous errors; HDBSCAN finds geometric clusters of high-error samples.
+- **Bootstrap Stability Validation** — every candidate latent variable is stress-tested across 50+ bootstrap resamples with triple-gate survival checks (variance, range, support).
+- **Business-Ready Explanations** — every finding is translated into clear, non-technical language suitable for executives, analysts, and domain experts.
+- **Full REST API** — 17 endpoints covering datasets, experiments, progress monitoring, results, reports, and CSV exports.
+- **Real-Time Monitoring** — Celery Flower dashboard for task monitoring; progress polling for live experiment tracking.
+- **Interactive Streamlit UI** — visual interface for uploading data, launching experiments, and exploring results.
+
+---
+
+## Architecture Stack
+
+| Layer | Technology |
+|-------|-----------|
+| **API** | FastAPI 0.111 · Pydantic v2 · Uvicorn |
+| **Task Queue** | Celery 5.4 · Redis 7 |
+| **Database** | PostgreSQL 16 · SQLAlchemy 2.0 (async) · Alembic |
+| **ML** | scikit-learn 1.5 · XGBoost 2.0 · HDBSCAN · SciPy · SHAP |
+| **UI** | Streamlit 1.35 · Plotly |
+| **Observability** | structlog · Sentry (optional) · Celery Flower |
+| **Infrastructure** | Docker · Docker Compose |
+
+---
+
+## Folder Structure
 
 ```
-┌────────────────────────────────────────────────────┐
-│                  Streamlit UI (8501)               │
-└───────────────────────┬────────────────────────────┘
-                        │ REST / WebSocket
-┌───────────────────────▼────────────────────────────┐
-│              FastAPI Service (8000)                │
-│  ┌──────────┐  ┌────────────┐  ┌───────────────┐  │
-│  │  Auth MW │  │ Rate Limit │  │ Error Handler │  │
-│  └──────────┘  └────────────┘  └───────────────┘  │
-│  ┌──────────────────────────────────────────────┐  │
-│  │              API v1 Router                   │  │
-│  │  /datasets  /experiments  /latent-variables  │  │
-│  └──────────────────────────────────────────────┘  │
-└───────────────────────┬────────────────────────────┘
-                        │ Enqueue jobs
-┌───────────────────────▼────────────────────────────┐
-│           Redis (6379) — Broker + Cache            │
-└───────────────────────┬────────────────────────────┘
-                        │ Consume jobs
-┌───────────────────────▼────────────────────────────┐
-│              Celery Worker Pool                    │
-│  ┌─────────────────────────────────────────────┐  │
-│  │              IVE Engine                     │  │
-│  │  Phase 1: Understand  →  Data profiling     │  │
-│  │  Phase 2: Model       →  Train + residuals  │  │
-│  │  Phase 3: Detect      →  Subgroup patterns  │  │
-│  │  Phase 4: Construct   →  Synthesize LVs     │  │
-│  └─────────────────────────────────────────────┘  │
-└───────────────────────┬────────────────────────────┘
-                        │ Read/Write
-┌───────────────────────▼────────────────────────────┐
-│         PostgreSQL (5432) — Primary DB             │
-└────────────────────────────────────────────────────┘
+invisible-variables-engine/
+├── src/ive/                   # Core Python package
+│   ├── api/v1/                #   FastAPI routers, schemas, dependencies
+│   ├── config.py              #   Pydantic Settings (env-based)
+│   ├── construction/          #   Phase 4: synthesis, bootstrap, explanation
+│   ├── core/                  #   Pipeline orchestrator
+│   ├── data/                  #   Phase 1: ingestion, profiling, preprocessing
+│   ├── db/                    #   SQLAlchemy models, repositories, Alembic
+│   ├── detection/             #   Phase 3: subgroup discovery, HDBSCAN clustering
+│   ├── main.py                #   FastAPI app factory
+│   ├── models/                #   Phase 2: Linear, XGBoost, cross-validator
+│   ├── storage/               #   Artifact store (local / S3)
+│   ├── utils/                 #   Logging, reporting helpers
+│   └── workers/               #   Celery app, task definitions
+├── streamlit_app/             # Streamlit UI
+├── demo_datasets/             # 5 synthetic datasets with ground-truth metadata
+├── tests/                     # Test suite (unit, integration, statistical)
+├── alembic/                   # Database migration scripts
+├── scripts/                   # DB seeding, data generation utilities
+├── docs/                      # Extended documentation
+├── docker-compose.yml         # Multi-service orchestration
+├── Dockerfile                 # Multi-stage build (api, worker, streamlit)
+├── Makefile                   # Developer workflow commands
+└── pyproject.toml             # Poetry project + tool configuration
 ```
-
-### Four-Phase Pipeline
-
-| Phase | Name           | Description                                                                          |
-| ----- | -------------- | ------------------------------------------------------------------------------------ |
-| 1     | **Understand** | Profile dataset; detect column types, distributions, missing values, correlations    |
-| 2     | **Model**      | Train baseline models; compute cross-validated residuals                             |
-| 3     | **Detect**     | Discover subgroups with high residual error via SHAP, HDBSCAN & subgroup discovery   |
-| 4     | **Construct**  | Synthesise candidate latent variables; validate statistically; generate explanations |
 
 ---
 
@@ -71,140 +68,151 @@ A production-grade data science system that discovers **hidden latent variables*
 
 ### Prerequisites
 
-- Docker ≥ 24.0 and Docker Compose ≥ 2.20
-- Python 3.11+ (for local development)
-- Poetry (for local development)
+- Docker & Docker Compose v2+
+- 4 GB RAM minimum (8 GB recommended)
 
-### Using Docker Compose
+### 1. Clone and configure
 
 ```bash
-# 1. Clone the repository
-git clone https://github.com/yourusername/invisible-variables-engine.git
+git clone https://github.com/your-org/invisible-variables-engine.git
 cd invisible-variables-engine
-
-# 2. Configure environment
 cp .env.example .env
-# Edit .env with your settings
-
-# 3. Start all services
-make dev
-
-# 4. Run database migrations
-make migrate
-
-# 5. (Optional) Seed development data
-make seed
 ```
 
-Services will be available at:
-
-| Service       | URL                        |
-| ------------- | -------------------------- |
-| API           | http://localhost:8000      |
-| OpenAPI Docs  | http://localhost:8000/docs |
-| Streamlit UI  | http://localhost:8501      |
-| Celery Flower | http://localhost:5555      |
-
-### Local Development (without Docker)
+### 2. Launch all services
 
 ```bash
-make setup          # Install dependencies and pre-commit hooks
-make migrate        # Run DB migrations
-make dev-local      # Start API server
-make worker-local   # Start Celery worker (separate terminal)
-make streamlit-local # Start Streamlit (separate terminal)
+docker compose up --build -d
+```
+
+### 3. Verify
+
+```bash
+# Health check
+curl http://localhost:8000/api/v1/health
+
+# Readiness (DB + Redis)
+curl http://localhost:8000/api/v1/health/ready
+```
+
+### 4. Access
+
+| Service | URL |
+|---------|-----|
+| **API** | [http://localhost:8000](http://localhost:8000) |
+| **API Docs (Swagger)** | [http://localhost:8000/docs](http://localhost:8000/docs) |
+| **Streamlit UI** | [http://localhost:8501](http://localhost:8501) |
+| **Flower Dashboard** | [http://localhost:5555](http://localhost:5555) |
+
+### 5. Run a demo experiment
+
+```bash
+# Upload a demo dataset
+curl -X POST http://localhost:8000/api/v1/datasets/ \
+  -H "X-API-Key: dev-key-1" \
+  -F "file=@demo_datasets/delivery_hidden_weather.csv" \
+  -F "target_column=delivery_time"
+
+# Create experiment (use the dataset_id from the response)
+curl -X POST http://localhost:8000/api/v1/experiments/ \
+  -H "X-API-Key: dev-key-1" \
+  -H "Content-Type: application/json" \
+  -d '{"dataset_id": "<DATASET_ID>", "config": {"analysis_mode": "demo"}}'
 ```
 
 ---
 
-## Development
-
-### Common Commands
+## Docker Commands
 
 ```bash
-make test           # Run full test suite
-make test-unit      # Unit tests only
-make lint           # Run ruff + mypy
-make format         # Auto-format code
-make makemigrations MSG="describe your change"
-make migrate
-make clean          # Remove caches and build artifacts
-make logs           # Tail all service logs
-```
-
-### Project Structure
-
-```
-.
-├── src/ive/              # Core Python package
-│   ├── api/              # FastAPI routes, schemas, middleware
-│   ├── core/             # Four-phase engine + orchestrator
-│   ├── data/             # Ingestion, profiling, validation, preprocessing
-│   ├── models/           # ML models and residual analysis
-│   ├── detection/        # Subgroup discovery, clustering, SHAP
-│   ├── construction/     # Latent variable synthesis + validation
-│   ├── db/               # SQLAlchemy models + repositories
-│   ├── workers/          # Celery app + task definitions
-│   ├── storage/          # Artifact store (local / S3)
-│   └── utils/            # Logging, statistics, helpers
-├── streamlit_app/        # Streamlit UI
-├── tests/                # Unit, integration, statistical tests
-├── scripts/              # Utility scripts
-├── alembic/              # Database migrations
-└── docs/                 # HLD, LLD, API, User Guide
+make dev              # Build and start all services
+make down             # Stop all services
+make restart          # Restart all services
+make logs             # Tail logs from all services
+make logs-api         # Tail API logs only
+make logs-worker      # Tail worker logs only
+make down-volumes     # Stop and remove all data (destructive)
+make ps               # Show running service status
 ```
 
 ---
 
-## API Reference
+## Screenshots
 
-See [docs/API.md](docs/API.md) or the auto-generated docs at http://localhost:8000/docs.
+> **Streamlit Dashboard** — upload datasets, launch experiments, and explore discovered latent variables in an interactive visual interface.
 
-Authentication: Pass your API key in the `X-API-Key` header.
+> **API Swagger UI** — full OpenAPI documentation available at `/docs` with "Try it out" for every endpoint.
+
+> **Flower Dashboard** — real-time Celery task monitoring at `localhost:5555`.
 
 ---
 
 ## Testing
 
+The project includes a comprehensive test suite organized into three tiers:
+
 ```bash
-make test                 # All tests with coverage
-make test-unit            # Unit tests (fast)
-make test-integration     # Integration tests (needs running services)
-make test-statistical     # Statistical validation tests
-make test-coverage        # Generate HTML coverage report
+make test             # Run all 201 tests with coverage
+make test-unit        # Unit tests only (~150 tests, fast)
+make test-integration # Integration tests (requires running services)
+make test-statistical # Statistical validation tests
+make test-fast        # All tests except slow statistical tests
+make test-coverage    # Generate HTML coverage report
 ```
 
-Coverage target: **≥ 85%**
+| Tier | Count | Description |
+|------|-------|-------------|
+| **Unit** | ~150 | In-process, no DB/Redis. Covers models, detection, construction, profiling. |
+| **Integration** | ~30 | Requires Docker services. Tests API endpoints, job processing, E2E pipeline. |
+| **Statistical** | ~20 | Numerical accuracy: reproducibility, false-positive control, ground-truth recovery. |
 
 ---
 
-## Configuration
+## Demo Datasets
 
-All configuration is environment-variable driven. See [`.env.example`](.env.example) for the full reference.
+Five synthetic datasets are included in `demo_datasets/`, each containing a known hidden variable for validation:
 
-Key variables:
-
-| Variable         | Default       | Description                        |
-| ---------------- | ------------- | ---------------------------------- |
-| `DATABASE_URL`   | —             | Postgres async DSN                 |
-| `REDIS_URL`      | —             | Redis DSN                          |
-| `SECRET_KEY`     | —             | Required in production             |
-| `VALID_API_KEYS` | —             | Comma-separated API keys           |
-| `ENV`            | `development` | `development\|staging\|production` |
+| Dataset | Target | Hidden Variable | Affected % | Detection Type |
+|---------|--------|----------------|------------|----------------|
+| `delivery_hidden_weather` | `delivery_time` | Storm delay zone (distance > 10 & traffic > 7.5) | 19.5% | Subgroup |
+| `healthcare_hidden_risk` | `recovery_days` | Post-surgery complication (BMI > 30 & BP > 150) | 22.3% | Subgroup |
+| `manufacturing_hidden_shift` | `defect_rate` | Night shift instability (vibration > 7 & humidity > 75) | 10.7% | Subgroup |
+| `retail_hidden_promo` | `spend_amount` | Premium promo eligibility (loyalty > 0.8 & basket > 8) | 8.7% | Subgroup |
+| `no_hidden_random_noise` | `target` | None (control dataset) | 0% | — |
 
 ---
 
-## Contributing
+## Demo vs Production Mode
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feat/my-feature`)
-3. Make your changes with tests
-4. Run `make check` to verify lint + types
-5. Run `make test` to verify tests pass
-6. Open a pull request
+IVE operates in two analysis modes, controlled by the `analysis_mode` field in the experiment configuration:
+
+| Aspect | Demo Mode | Production Mode |
+|--------|-----------|-----------------|
+| **Purpose** | Synthetic datasets, demos, exploration | Real-world data with rigorous gating |
+| **Bootstrap stability threshold** | 0.50 (50%) | 0.70 (70%) |
+| **Minimum variance floor** | 1e-7 | 1e-5 |
+| **Minimum score range** | 0.01 | 0.05 |
+| **Support rate window** | 0.5%–98% | 1%–95% |
+| **Subgroup min samples** | 20 | 30 |
+| **Effect size threshold** | 0.15 | 0.20 |
+
+Use **demo mode** for demonstrations and synthetic datasets. Use **production mode** for real-world analyses where false positives carry operational cost.
+
+---
+
+## Future Roadmap
+
+- **Multi-target analysis** — run IVE on multiple targets simultaneously to find shared latent structure.
+- **Time-series latent variables** — temporal drift detection and change-point analysis on residuals.
+- **Automated re-training** — close the loop by feeding discovered variables back into model training.
+- **Interactive SHAP explorer** — per-latent-variable feature importance visualization in Streamlit.
+- **S3 artifact store** — production storage backend for model artifacts and datasets.
+- **Kubernetes deployment** — Helm chart and horizontal pod autoscaling for Celery workers.
+- **Webhook notifications** — notify external systems when experiments complete.
+- **Multi-tenant isolation** — per-organization dataset and experiment scoping.
 
 ---
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE) for details.

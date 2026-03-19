@@ -17,13 +17,13 @@ For each column in *X*:
    single bin if cutting is impossible.
 2. **Categorical / boolean** → one bin per unique value (NaN-aware).
 
-For each bin (subgroup) with ≥ 10 samples:
+For each bin (subgroup) with ≥ ``min_subgroup_size`` samples (default 20):
 
 * Two-sample KS test:  ``scipy.stats.ks_2samp(bin_residuals, global_residuals)``
 * Cohen's *d*:  ``(mean_bin − mean_global) / std_global``  (guarded against σ = 0)
 * Bonferroni correction:  ``α_adj = α / max(1, total_bins_tested)``
 
-A pattern is retained when ``p < α_adj`` **and** ``|d| > 0.2`` (small effect).
+A pattern is retained when ``p < α_adj`` **and** ``|d| > min_effect_size`` (default 0.15).
 
 The output is a list of pattern dicts sorted by ``|effect_size|`` descending,
 ready for the ``PatternScorer`` stage and eventual DB persistence.
@@ -44,7 +44,7 @@ log = structlog.get_logger(__name__)
 # ---------------------------------------------------------------------------
 # Minimum samples required for a subgroup to be statistically tested.
 # ---------------------------------------------------------------------------
-_MIN_BIN_SAMPLES: int = 10
+_MIN_BIN_SAMPLES: int = 20
 
 # ---------------------------------------------------------------------------
 # Default number of quantile bins for numeric columns.
@@ -54,7 +54,7 @@ _DEFAULT_N_BINS: int = 5
 # ---------------------------------------------------------------------------
 # Minimum absolute Cohen's d to keep a pattern.
 # ---------------------------------------------------------------------------
-_MIN_EFFECT_SIZE: float = 0.2
+_MIN_EFFECT_SIZE: float = 0.15
 
 
 # ---------------------------------------------------------------------------

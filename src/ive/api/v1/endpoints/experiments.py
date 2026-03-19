@@ -10,13 +10,21 @@ Routes:
     GET    /experiments/{experiment_id}/latent-variables — Latent variables
     POST   /experiments/{experiment_id}/cancel          — Cancel & revoke task
     DELETE /experiments/{experiment_id}                 — Hard delete
+
+    GET    /experiments/{experiment_id}/report                  — Full JSON report
+    GET    /experiments/{experiment_id}/summary                 — Compact summary JSON
+    GET    /experiments/{experiment_id}/patterns/export         — Patterns CSV download
+    GET    /experiments/{experiment_id}/latent-variables/export — LVs CSV download
 """
 
 from __future__ import annotations
 
+import io
+import json
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,6 +36,7 @@ from ive.api.v1.schemas.experiment_schemas import (
     ExperimentListResponse,
     ExperimentProgressResponse,
     ExperimentResponse,
+    ExperimentSummaryResponse,
 )
 from ive.api.v1.schemas.latent_variable_schemas import (
     LatentVariableListResponse,
@@ -38,6 +47,11 @@ from ive.db.repositories.dataset_repo import DatasetRepository
 from ive.db.repositories.experiment_repo import ExperimentRepository
 from ive.db.repositories.latent_variable_repo import LatentVariableRepository
 from ive.utils.logging import get_logger
+from ive.utils.reporting import (
+    build_full_report,
+    latent_variables_to_csv,
+    patterns_to_csv,
+)
 
 log = get_logger(__name__)
 router = APIRouter()
@@ -341,3 +355,288 @@ async def delete_experiment(
     await exp_repo.delete(experiment_id)
     log.info("experiments.delete", experiment_id=str(experiment_id))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ---------------------------------------------------------------------------
+# GET /experiments/{experiment_id}/summary  — Compact summary JSON
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{experiment_id}/summary",
+    response_model=ExperimentSummaryResponse,
+    summary="Get compact experiment summary",
+    tags=["Reporting"],
+)
+async def get_experiment_summary(
+    experiment_id: UUID,
+    db: AsyncSession = Depends(get_db),
+) -> ExperimentSummaryResponse:
+    """Return headline, counts, top findings and recommendations for a completed experiment.
+
+    The summary is reconstructed live from current DB state using
+    :class:`ExplanationGenerator` so it is always fresh and does not
+    require a dedicated summary table.
+
+    Returns 404 if the experiment does not exist.
+    """
+    from ive.construction.explanation_generator import ExplanationGenerator
+
+    exp_repo = ExperimentRepository(db, Experiment)
+    experiment = await exp_repo.get_by_id(experiment_id)
+    if experiment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Experiment {experiment_id} not found.",
+        )
+
+    # Fetch patterns and latent variables
+    patterns = await exp_repo.get_error_patterns(experiment_id)
+    patterns_dicts = [_orm_to_dict(p) for p in patterns]
+
+    lv_repo = LatentVariableRepository(db, LatentVariable)
+    lvs = await lv_repo.get_by_experiment(experiment_id)
+    lv_dicts = [_orm_to_dict(v) for v in lvs]
+
+    # Reconstruct summary live
+    dataset_name = str(experiment_id)[:8]
+    target_column = ""
+    ds_repo = DatasetRepository(db, Dataset)
+    dataset = await ds_repo.get_by_id(experiment.dataset_id)
+    if dataset is not None:
+        dataset_name = getattr(dataset, "name", dataset_name)
+        target_column = getattr(dataset, "target_column", "")
+
+    explainer = ExplanationGenerator()
+    summary = explainer.generate_experiment_summary(
+        patterns=patterns_dicts,
+        candidates=lv_dicts,
+        dataset_name=dataset_name,
+        target_column=target_column,
+    )
+
+    log.info("experiments.summary", experiment_id=str(experiment_id))
+    return ExperimentSummaryResponse(**summary)
+
+
+# ---------------------------------------------------------------------------
+# GET /experiments/{experiment_id}/report  — Full JSON report
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{experiment_id}/report",
+    summary="Download full experiment report as JSON",
+    tags=["Reporting"],
+)
+async def get_experiment_report(
+    experiment_id: UUID,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Return the complete experiment report as a downloadable JSON file.
+
+    The response includes:
+
+    * ``experiment`` — full experiment metadata
+    * ``dataset``    — dataset metadata
+    * ``patterns``   — all detected error patterns
+    * ``latent_variables`` — all latent variable candidates
+    * ``summary``    — executive summary from ExplanationGenerator
+
+    Content-Type is ``application/json`` with a ``Content-Disposition``
+    header prompting a file download.
+
+    Returns 404 if the experiment does not exist.
+    """
+    from ive.construction.explanation_generator import ExplanationGenerator
+
+    exp_repo = ExperimentRepository(db, Experiment)
+    experiment = await exp_repo.get_by_id(experiment_id)
+    if experiment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Experiment {experiment_id} not found.",
+        )
+
+    # Serialise experiment
+    exp_dict = ExperimentResponse.model_validate(experiment).model_dump(mode="json")
+
+    # Fetch and serialise dataset
+    dataset_dict: dict = {}
+    ds_repo = DatasetRepository(db, Dataset)
+    dataset = await ds_repo.get_by_id(experiment.dataset_id)
+    if dataset is not None:
+        dataset_dict = {
+            "id": str(dataset.id),
+            "name": getattr(dataset, "name", ""),
+            "target_column": getattr(dataset, "target_column", ""),
+            "row_count": getattr(dataset, "row_count", None),
+            "col_count": getattr(dataset, "col_count", None),
+        }
+
+    # Fetch patterns and latent variables
+    patterns = await exp_repo.get_error_patterns(experiment_id)
+    patterns_dicts = [_orm_to_dict(p) for p in patterns]
+
+    lv_repo = LatentVariableRepository(db, LatentVariable)
+    lvs = await lv_repo.get_by_experiment(experiment_id)
+    lv_dicts = [_orm_to_dict(v) for v in lvs]
+
+    # Build summary
+    dataset_name = dataset_dict.get("name") or str(experiment_id)[:8]
+    target_column = dataset_dict.get("target_column", "")
+    explainer = ExplanationGenerator()
+    summary = explainer.generate_experiment_summary(
+        patterns=patterns_dicts,
+        candidates=lv_dicts,
+        dataset_name=dataset_name,
+        target_column=target_column,
+    )
+
+    report = build_full_report(
+        experiment=exp_dict,
+        dataset=dataset_dict,
+        patterns=patterns_dicts,
+        latent_variables=lv_dicts,
+        summary=summary,
+    )
+
+    filename = f"experiment_{str(experiment_id)[:8]}_report.json"
+    log.info("experiments.report", experiment_id=str(experiment_id))
+    return Response(
+        content=json.dumps(report, indent=2, default=str),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /experiments/{experiment_id}/patterns/export  — Patterns CSV
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{experiment_id}/patterns/export",
+    summary="Download patterns as CSV",
+    tags=["Reporting"],
+)
+async def export_patterns_csv(
+    experiment_id: UUID,
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    """Stream a CSV download of all error patterns for the given experiment.
+
+    Columns: ``pattern_type``, ``column_name``, ``effect_size``,
+    ``p_value``, ``adjusted_p_value``, ``sample_count``,
+    ``mean_residual``, ``std_residual``.
+
+    Returns an empty CSV (header only) when no patterns exist.
+    Returns 404 if the experiment does not exist.
+    """
+    exp_repo = ExperimentRepository(db, Experiment)
+    experiment = await exp_repo.get_by_id(experiment_id)
+    if experiment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Experiment {experiment_id} not found.",
+        )
+
+    patterns = await exp_repo.get_error_patterns(experiment_id)
+    patterns_dicts = [_orm_to_dict(p) for p in patterns]
+
+    csv_str = patterns_to_csv(patterns_dicts)
+    filename = f"experiment_{str(experiment_id)[:8]}_patterns.csv"
+
+    log.info(
+        "experiments.export_patterns",
+        experiment_id=str(experiment_id),
+        n_patterns=len(patterns_dicts),
+    )
+    return StreamingResponse(
+        io.StringIO(csv_str),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /experiments/{experiment_id}/latent-variables/export  — LVs CSV
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{experiment_id}/latent-variables/export",
+    summary="Download latent variables as CSV",
+    tags=["Reporting"],
+)
+async def export_latent_variables_csv(
+    experiment_id: UUID,
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    """Stream a CSV download of all latent variables for the given experiment.
+
+    Columns: ``name``, ``status``, ``stability_score``,
+    ``bootstrap_presence_rate``, ``importance_score``,
+    ``description``, ``explanation_text``.
+
+    Returns an empty CSV (header only) when no latent variables exist.
+    Returns 404 if the experiment does not exist.
+    """
+    exp_repo = ExperimentRepository(db, Experiment)
+    experiment = await exp_repo.get_by_id(experiment_id)
+    if experiment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Experiment {experiment_id} not found.",
+        )
+
+    lv_repo = LatentVariableRepository(db, LatentVariable)
+    lvs = await lv_repo.get_by_experiment(experiment_id)
+    lv_dicts = [_orm_to_dict(v) for v in lvs]
+
+    csv_str = latent_variables_to_csv(lv_dicts)
+    filename = f"experiment_{str(experiment_id)[:8]}_latent_variables.csv"
+
+    log.info(
+        "experiments.export_latent_variables",
+        experiment_id=str(experiment_id),
+        n_variables=len(lv_dicts),
+    )
+    return StreamingResponse(
+        io.StringIO(csv_str),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Internal helper
+# ---------------------------------------------------------------------------
+
+
+def _orm_to_dict(obj: object) -> dict:
+    """Serialise a SQLAlchemy ORM instance to a plain dict.
+
+    Uses ``__dict__`` and strips the SQLAlchemy internal ``_sa_instance_state``
+    key.  UUID and datetime fields are converted to strings so the result is
+    always JSON-serialisable.
+
+    Args:
+        obj: SQLAlchemy ORM model instance.
+
+    Returns:
+        Plain dict with string-serialised UUID/datetime values.
+    """
+    import datetime
+    from uuid import UUID as _UUID
+
+    raw = {k: v for k, v in obj.__dict__.items() if not k.startswith("_")}
+    out: dict = {}
+    for k, v in raw.items():
+        if isinstance(v, _UUID):
+            out[k] = str(v)
+        elif isinstance(v, datetime.datetime):
+            out[k] = v.isoformat()
+        else:
+            out[k] = v
+    return out

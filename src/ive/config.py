@@ -237,6 +237,54 @@ class MLSettings(BaseSettings):
     )
 
 
+class DetectionSettings(BaseSettings):
+    """Detection and validation calibration parameters.
+
+    These settings control the sensitivity of the subgroup discovery and
+    bootstrap validation stages.  ``demo_mode`` applies relaxed thresholds
+    so synthetic datasets produce more interpretable results.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="", extra="ignore")
+
+    demo_mode: bool = Field(
+        default=False,
+        description="Enable demo mode with relaxed detection/validation thresholds.",
+    )
+    default_stability_threshold: float = Field(
+        default=0.7,
+        ge=0.0,
+        le=1.0,
+        description="Bootstrap presence rate threshold in production mode.",
+    )
+    demo_stability_threshold: float = Field(
+        default=0.6,
+        ge=0.0,
+        le=1.0,
+        description="Bootstrap presence rate threshold in demo mode.",
+    )
+    default_min_effect_size: float = Field(
+        default=0.15,
+        ge=0.0,
+        description="Minimum absolute Cohen's d to retain a subgroup pattern.",
+    )
+    default_min_subgroup_size: int = Field(
+        default=20,
+        ge=2,
+        description="Minimum samples in a subgroup before testing.",
+    )
+    default_min_variance_threshold: float = Field(
+        default=1e-5,
+        ge=0.0,
+        description="Variance floor for bootstrap rule survival check.",
+    )
+
+    @property
+    def effective_stability_threshold(self) -> float:
+        """Return the stability threshold appropriate for the current mode."""
+        return self.demo_stability_threshold if self.demo_mode else self.default_stability_threshold
+
+
 class StorageSettings(BaseSettings):
     """Artifact storage configuration (local filesystem or S3)."""
 
@@ -291,6 +339,7 @@ class Settings(
     CelerySettings,
     SecuritySettings,
     MLSettings,
+    DetectionSettings,
     StorageSettings,
 ):
     """Master settings class for the Invisible Variables Engine.

@@ -77,6 +77,8 @@ services:
     volumes:
       - ./src:/app/src
       - ./tests:/app/tests
+      - ./scripts:/app/scripts
+      - ./demo_datasets:/app/demo_datasets
       -  ./alembic:/app/alembic
       - artifact_data:/app/artifacts
     ports:
@@ -115,6 +117,8 @@ services:
     volumes:
       - ./src:/app/src
       - ./tests:/app/tests
+      - ./scripts:/app/scripts
+      - ./demo_datasets:/app/demo_datasets
       - artifact_data:/app/artifacts
     depends_on:
       postgres:

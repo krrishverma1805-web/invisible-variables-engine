@@ -33,6 +33,7 @@ import pandas as pd
 import structlog
 
 from ive.construction.bootstrap_validator import BootstrapValidator
+from ive.construction.explanation_generator import ExplanationGenerator
 from ive.construction.variable_synthesizer import VariableSynthesizer
 from ive.db.models import Dataset, Experiment, LatentVariable
 from ive.db.repositories.dataset_repo import DatasetRepository
@@ -411,9 +412,22 @@ class IVEPipeline:
             residuals = primary["residuals"]
             abs_residuals = primary["abs_residuals"]
 
+            # Read analysis mode from experiment config (default to 'demo' for safety)
+            analysis_mode: str = str(config.get("analysis_mode", "demo")).lower()
+            if analysis_mode not in ("demo", "production"):
+                analysis_mode = "demo"
+
+            # Mode-specific subgroup discovery thresholds
+            if analysis_mode == "demo":
+                sg_effect_size = 0.15
+                sg_min_subgroup = 20
+            else:  # production
+                sg_effect_size = 0.20
+                sg_min_subgroup = 30
+
             all_patterns: list[dict[str, Any]] = []
 
-            sg = SubgroupDiscovery()
+            sg = SubgroupDiscovery(min_effect_size=sg_effect_size, min_bin_samples=sg_min_subgroup)
             sg_patterns = sg.detect(X, residuals)
             all_patterns.extend(sg_patterns)
 
@@ -446,35 +460,38 @@ class IVEPipeline:
             await exp_repo.update_progress(experiment_id, 75, "construct")
 
             # ── Phase 4: Construct — synthesis + validation ───────────
+            explainer = ExplanationGenerator()
+
             if all_patterns:
                 synth = VariableSynthesizer()
                 candidates = synth.synthesize(all_patterns, X)
 
-                validator = BootstrapValidator()
-                validated = validator.validate(X, candidates, n_iterations=50)
+                validator = BootstrapValidator(mode=analysis_mode)  # type: ignore[arg-type]
+                validated = validator.validate(
+                    X, candidates, n_iterations=int(config.get("bootstrap_iterations", 50))
+                )
 
                 # Build rows for bulk_create
                 lv_rows: list[dict[str, Any]] = []
                 for var in validated:
                     presence = float(var.get("bootstrap_presence_rate", 0.0))
-                    lv_rows.append(
-                        {
-                            "name": var.get("name", "Unknown"),
-                            "description": (
-                                f"Discovered via {var.get('pattern_type', 'unknown')} analysis"
-                            ),
-                            "construction_rule": var.get("construction_rule", {}),
-                            "source_pattern_ids": [],
-                            "importance_score": float(var.get("stability_score", 0.0)),
-                            "stability_score": float(var.get("stability_score", 0.0)),
-                            "bootstrap_presence_rate": presence,
-                            "explanation_text": (
-                                f"Variable '{var.get('name')}' was found to be stable across "
-                                f"{int(presence * 100)}% of bootstrap resamples."
-                            ),
-                            "status": var.get("status", "rejected"),
-                        }
-                    )
+                    explanation = explainer.generate_latent_variable_explanation(var)
+                    recommendation = explainer.generate_business_recommendation(var)
+                    row: dict[str, Any] = {
+                        "name": var.get("name", "Unknown"),
+                        "description": recommendation,
+                        "construction_rule": var.get("construction_rule", {}),
+                        "source_pattern_ids": [],
+                        "importance_score": float(var.get("stability_score", 0.0)),
+                        "stability_score": float(var.get("stability_score", 0.0)),
+                        "bootstrap_presence_rate": presence,
+                        "explanation_text": explanation,
+                        "status": var.get("status", "rejected"),
+                    }
+                    # Persist rejection reason for rejected candidates
+                    if var.get("rejection_reason"):
+                        row["rejection_reason"] = var["rejection_reason"]
+                    lv_rows.append(row)
 
                 if lv_rows:
                     lv_repo = LatentVariableRepository(self.session, LatentVariable)
@@ -487,9 +504,21 @@ class IVEPipeline:
                     n_candidates=len(candidates),
                     n_validated=n_validated,
                     n_rejected=n_rejected,
+                    analysis_mode=analysis_mode,
                 )
             else:
+                validated = []
                 self.logger.info("pipeline.no_patterns_found")
+
+            # ── Generate experiment summary ───────────────────────────
+            dataset_name = getattr(dataset, "name", "dataset")
+            experiment_summary = explainer.generate_experiment_summary(
+                patterns=all_patterns,
+                candidates=validated,
+                dataset_name=dataset_name,
+                target_column=target_col,
+                analysis_mode=analysis_mode,
+            )
 
             # ── Complete ──────────────────────────────────────────────
             await exp_repo.update_progress(experiment_id, 100, "complete")
@@ -508,6 +537,8 @@ class IVEPipeline:
                 "n_patterns": len(all_patterns),
                 "n_validated": sum(1 for v in validated if v.get("status") == "validated"),
                 "elapsed_seconds": elapsed,
+                "analysis_mode": analysis_mode,
+                "experiment_summary": experiment_summary,
             }
 
         except Exception as exc:

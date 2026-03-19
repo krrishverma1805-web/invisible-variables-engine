@@ -1,0 +1,9 @@
+{
+  "dataset_name": "no_hidden_random_noise",
+  "target_column": "target_value",
+  "hidden_variable_name": null,
+  "hidden_rule": null,
+  "affected_pct": 0,
+  "expected_detection_type": null,
+  "notes": "Control dataset with a purely linear DGP and Gaussian noise. No latent variables should be validated by IVE. If any are reported, it indicates a false-positive problem."
+}

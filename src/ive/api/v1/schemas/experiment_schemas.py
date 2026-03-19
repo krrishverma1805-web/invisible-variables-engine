@@ -9,10 +9,17 @@ so they can be constructed directly from SQLAlchemy model instances.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
+
+# ---------------------------------------------------------------------------
+# Type aliases
+# ---------------------------------------------------------------------------
+
+#: Allowed analysis modes.
+AnalysisMode = Literal["demo", "production"]
 
 # ---------------------------------------------------------------------------
 # Config (embedded in create request and stored as config_json)
@@ -40,6 +47,14 @@ class ExperimentConfig(BaseModel):
     max_features: int = Field(default=100)
     shap_sample_size: int = Field(default=500)
 
+    analysis_mode: AnalysisMode = Field(
+        default="demo",
+        description=(
+            "Analysis mode: 'demo' applies permissive thresholds for exploration; "
+            "'production' applies stricter thresholds to reduce false positives."
+        ),
+    )
+
     model_config = ConfigDict(populate_by_name=True)
 
 
@@ -57,6 +72,7 @@ class ExperimentCreate(BaseModel):
             "model_types": ["linear", "xgboost"],
             "cv_folds": 5,
             "bootstrap_iterations": 50,
+            "analysis_mode": "demo",
         }
     )
 
@@ -138,3 +154,32 @@ class ErrorPatternResponse(BaseModel):
     mean_residual: float
     std_residual: float
     created_at: datetime
+
+
+class ExperimentSummaryResponse(BaseModel):
+    """Compact experiment summary — headline, counts, and recommendations."""
+
+    headline: str
+    patterns_found: int
+    validated_variables: int
+    rejected_variables: int
+    summary_text: str
+    top_findings: list[str]
+    recommendations: list[str]
+    analysis_mode: str = Field(
+        default="demo", description="Analysis mode used for this experiment."
+    )
+    threshold_profile: str = Field(
+        default="Permissive (Demo)",
+        description="Human-readable description of the threshold profile applied.",
+    )
+
+
+class ExperimentFullReportResponse(BaseModel):
+    """Full experiment report bundling all result data."""
+
+    experiment: dict[str, Any]
+    dataset: dict[str, Any]
+    patterns: list[dict[str, Any]]
+    latent_variables: list[dict[str, Any]]
+    summary: ExperimentSummaryResponse

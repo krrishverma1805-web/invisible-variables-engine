@@ -1,0 +1,9 @@
+{
+  "dataset_name": "healthcare_hidden_risk",
+  "target_column": "recovery_days",
+  "hidden_variable_name": "post_surgery_complication",
+  "hidden_rule": "bmi > 30 AND blood_pressure > 150 \u2192 +10 recovery days",
+  "affected_pct": 22.3,
+  "expected_detection_type": "subgroup",
+  "notes": "The complication effect is clinically large (10 extra days). IVE should flag bmi (high quantile) and blood_pressure (high quantile) as interacting subgroups with elevated residuals."
+}

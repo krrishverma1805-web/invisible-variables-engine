@@ -1,7 +1,5 @@
 """IVE Core Orchestration."""
 
-from ive.core.phase_model import PhaseModel
+from ive.core.pipeline import IVEPipeline
 
-__all__ = [
-    "PhaseModel",
-]
+__all__ = ["IVEPipeline"]

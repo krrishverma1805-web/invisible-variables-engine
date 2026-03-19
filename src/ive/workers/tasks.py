@@ -228,11 +228,12 @@ async def _run_pipeline_async(experiment_id: str) -> dict[str, Any]:
         Summary dict returned by :meth:`IVEPipeline.run_experiment`.
     """
     from ive.core.pipeline import IVEPipeline
-    from ive.db.database import get_db_session
+    from ive.db.database import get_session, init_db
     from ive.storage.artifact_store import get_artifact_store
 
     store = get_artifact_store()
-    async with get_db_session() as session:
+    await init_db()
+    async with get_session() as session:
         pipeline = IVEPipeline(session, store)
         return await pipeline.run_experiment(UUID(experiment_id))
 
