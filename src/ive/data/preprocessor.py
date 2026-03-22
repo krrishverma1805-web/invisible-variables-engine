@@ -83,7 +83,7 @@ class DataPreprocessor:
         placeholder = np.zeros((len(df) if df is not None else 0, len(feature_columns)))
         return placeholder, feature_columns
 
-    def transform(self, df: Any, feature_columns: list[str]) -> np.ndarray:
+    def transform(self, df: Any, feature_columns: list[str]) -> np.ndarray[Any, Any]:
         """
         Apply fitted transformations to new data.
 
