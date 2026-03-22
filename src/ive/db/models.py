@@ -433,7 +433,7 @@ class LatentVariable(Base):
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
-    construction_rule: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    construction_rule: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     source_pattern_ids: Mapped[list[uuid.UUID]] = mapped_column(
         ARRAY(PG_UUID(as_uuid=True)),
         nullable=False,
