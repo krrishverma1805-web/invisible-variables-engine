@@ -490,7 +490,7 @@ class APIKey(Base):
     )
     key_hash: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    permissions: Mapped[dict] = mapped_column(
+    permissions: Mapped[dict[str, Any]] = mapped_column(
         JSONB,
         nullable=False,
         default=lambda: {"read": True, "write": True, "admin": False},
