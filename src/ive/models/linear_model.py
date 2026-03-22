@@ -9,7 +9,7 @@ a non-linear latent structure exists in the data.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import structlog
@@ -99,7 +99,7 @@ class LinearIVEModel(IVEModel):
         # Approximate SHAP via coefficient × feature deviation
         # TODO: Replace with shap.LinearExplainer for accuracy
         feature_means = np.zeros(X.shape[1])
-        return (X - feature_means) * self._model.coef_
+        return cast(np.ndarray[Any, Any], (X - feature_means) * self._model.coef_)
 
     def get_params(self) -> dict[str, Any]:
         return {"alpha": self.alpha, "model_type": "ridge"}
