@@ -156,7 +156,7 @@ class Experiment(Base):
         ForeignKey("datasets.id", ondelete="CASCADE"),
         nullable=False,
     )
-    config_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    config_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued")
     progress_pct: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     current_stage: Mapped[str | None] = mapped_column(String(50), nullable=True)
