@@ -546,7 +546,7 @@ class ExperimentEvent(Base):
     )
     phase: Mapped[str | None] = mapped_column(String(50), nullable=True)
     event_type: Mapped[str] = mapped_column(String(100), nullable=False)
-    payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    payload: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
