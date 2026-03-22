@@ -128,7 +128,7 @@ class XGBoostIVEModel(IVEModel):
             self._explainer = shap.TreeExplainer(self._model)
         return self._explainer.shap_values(X)  # type: ignore[no-any-return]
 
-    def get_shap_interaction_values(self, X: np.ndarray) -> np.ndarray:
+    def get_shap_interaction_values(self, X: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
         """
         Compute SHAP interaction values (n_samples, n_features, n_features).
 
