@@ -129,9 +129,10 @@ def confidence_interval_bootstrap(
     )
 
 
-def normalise_scores(scores: np.ndarray) -> np.ndarray:
+def normalise_scores(scores: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
     """Normalise an array to [0, 1] range (min-max)."""
+    from typing import cast
     rng = scores.max() - scores.min()
     if rng == 0:
         return np.zeros_like(scores, dtype=float)
-    return (scores - scores.min()) / rng
+    return cast(np.ndarray[Any, Any], (scores - scores.min()) / rng)
