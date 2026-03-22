@@ -7,11 +7,12 @@ sensible defaults.
 """
 
 from __future__ import annotations
+from typing import Any
 
 import numpy as np
 
 
-def cohens_d(group1: np.ndarray, group2: np.ndarray) -> float:
+def cohens_d(group1: np.ndarray[Any, Any], group2: np.ndarray[Any, Any]) -> float:
     """
     Compute Cohen's d effect size between two independent groups.
 
