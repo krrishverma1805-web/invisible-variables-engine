@@ -94,7 +94,7 @@ def permutation_test(
 
 
 def confidence_interval_bootstrap(
-    data: np.ndarray,
+    data: np.ndarray[Any, Any],
     statistic_fn: object,  # Callable[[np.ndarray], float]
     n_bootstrap: int = 1000,
     alpha: float = 0.05,
