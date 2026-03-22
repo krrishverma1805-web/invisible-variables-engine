@@ -372,7 +372,7 @@ class ErrorPattern(Base):
     stability_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     mean_residual: Mapped[float] = mapped_column(Float, nullable=False)
     std_residual: Mapped[float] = mapped_column(Float, nullable=False)
-    evidence: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    evidence: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
