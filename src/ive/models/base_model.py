@@ -22,7 +22,7 @@ class IVEModel(ABC):
     """
 
     @abstractmethod
-    def fit(self, X: np.ndarray, y: np.ndarray) -> None:
+    def fit(self, X: np.ndarray[Any, Any], y: np.ndarray[Any, Any]) -> None:
         """
         Fit the model on training data.
 
