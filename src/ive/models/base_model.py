@@ -56,7 +56,7 @@ class IVEModel(ABC):
         ...
 
     @abstractmethod
-    def get_shap_values(self, X: np.ndarray) -> np.ndarray:
+    def get_shap_values(self, X: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
         """
         Compute SHAP values for the given samples.
 
