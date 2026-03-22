@@ -244,8 +244,8 @@ class CrossValidator:
 
     def _compute_fold_score(
         self,
-        y_val: np.ndarray,
-        preds: np.ndarray,
+        y_val: np.ndarray[Any, Any],
+        preds: np.ndarray[Any, Any],
     ) -> float:
         """Compute a performance metric for a single fold.
 
