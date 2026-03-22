@@ -60,8 +60,8 @@ class DatasetResponse(BaseModel):
 
         Extracts ``columns`` and ``quality_score`` from ``schema_json``.
         """
-        schema: dict = ds.schema_json or {}
-        raw_cols: list[dict] = schema.get("columns", [])
+        schema: dict[str, Any] = ds.schema_json or {}
+        raw_cols: list[dict[str, Any]] = schema.get("columns", [])
         columns = [
             ColumnInfo(
                 name=c.get("name", ""),
