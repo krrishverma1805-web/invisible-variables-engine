@@ -364,7 +364,7 @@ class ErrorPattern(Base):
         nullable=False,
     )
     pattern_type: Mapped[str] = mapped_column(String(20), nullable=False)
-    subgroup_definition: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    subgroup_definition: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     effect_size: Mapped[float] = mapped_column(Float, nullable=False)
     p_value: Mapped[float] = mapped_column(Float, nullable=False)
     adjusted_p_value: Mapped[float] = mapped_column(Float, nullable=False)
