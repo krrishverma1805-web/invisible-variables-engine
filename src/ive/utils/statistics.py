@@ -59,8 +59,8 @@ def cramers_v(confusion_matrix: np.ndarray[Any, Any]) -> float:
 
 def permutation_test(
     observed_stat: float,
-    group1: np.ndarray,
-    group2: np.ndarray,
+    group1: np.ndarray[Any, Any],
+    group2: np.ndarray[Any, Any],
     n_permutations: int = 1000,
     seed: int = 42,
 ) -> float:
