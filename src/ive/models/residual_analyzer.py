@@ -115,8 +115,8 @@ class ResidualAnalyzer:
 
     def analyze(
         self,
-        residuals: np.ndarray,
-        X: np.ndarray | None = None,
+        residuals: np.ndarray[Any, Any],
+        X: np.ndarray[Any, Any] | None = None,
     ) -> ResidualAnalysis:
         """Perform full residual analysis with statistical tests.
 
