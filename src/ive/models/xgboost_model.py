@@ -57,7 +57,7 @@ class XGBoostIVEModel(IVEModel):
     def model_name(self) -> str:
         return "xgboost"
 
-    def fit(self, X: np.ndarray, y: np.ndarray) -> None:
+    def fit(self, X: np.ndarray[Any, Any], y: np.ndarray[Any, Any]) -> None:
         """
         Fit XGBoost on the training data.
 
