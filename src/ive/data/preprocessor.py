@@ -54,7 +54,7 @@ class DataPreprocessor:
         df: Any,
         feature_columns: list[str],
         column_types: dict[str, str] | None = None,
-    ) -> tuple[np.ndarray, list[str]]:
+    ) -> tuple[np.ndarray[Any, Any], list[str]]:
         """
         Fit preprocessor on training data and return transformed array.
 
