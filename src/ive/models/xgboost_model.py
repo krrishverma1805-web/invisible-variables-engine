@@ -111,7 +111,7 @@ class XGBoostIVEModel(IVEModel):
         }
         return dict(sorted(imp_dict.items(), key=lambda item: item[1], reverse=True))
 
-    def get_shap_values(self, X: np.ndarray) -> np.ndarray:
+    def get_shap_values(self, X: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
         """
         Compute exact SHAP values using TreeExplainer.
 
