@@ -310,7 +310,7 @@ class Residual(Base):
     predicted_value: Mapped[float] = mapped_column(Float, nullable=False)
     residual_value: Mapped[float] = mapped_column(Float, nullable=False)
     abs_residual: Mapped[float] = mapped_column(Float, nullable=False)
-    feature_vector: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    feature_vector: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
