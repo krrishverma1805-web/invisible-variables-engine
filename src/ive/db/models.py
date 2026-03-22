@@ -252,7 +252,7 @@ class TrainedModel(Base):
         default="rmse",
     )
     artifact_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    hyperparams: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    hyperparams: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     feature_importances: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     training_time_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
