@@ -1,3 +1,12 @@
+"""
+Monitor Progress — Invisible Variables Engine.
+
+Provides real-time experiment status tracking, configuration display,
+and a chronological Execution Log sourced from the pipeline event audit table.
+"""
+
+from __future__ import annotations
+
 import os
 import time
 
@@ -13,12 +22,38 @@ st.set_page_config(
 API_BASE = os.getenv("API_BASE_URL", "http://api:8000")
 HEADERS = {"X-API-Key": "dev-key-1"}
 
+# ---------------------------------------------------------------------------
+# Phase badge colours (CSS-class-free — use inline markdown emoji)
+# ---------------------------------------------------------------------------
+_PHASE_ICONS: dict[str, str] = {
+    "understand": "🔍",
+    "model": "🤖",
+    "detect": "🔎",
+    "construct": "🏗️",
+}
+
+_EVENT_ICONS: dict[str, str] = {
+    "experiment_started": "🚀",
+    "dataset_loaded": "📂",
+    "modeling_started": "⚙️",
+    "modeling_completed": "✅",
+    "detection_started": "🔎",
+    "detection_completed": "✅",
+    "construction_started": "🏗️",
+    "construction_completed": "✅",
+    "experiment_completed": "🎉",
+    "experiment_failed": "❌",
+}
+
 st.title("⏳ Monitor Progress")
 st.markdown("Track the execution status of your IVE experiments in real time.")
 
-# --- Fetch All Experiments ---
+# ---------------------------------------------------------------------------
+# Experiment selector
+# ---------------------------------------------------------------------------
 experiments_dict: dict[str, str] = {}
-experiments_meta: dict[str, dict] = {}  # label → raw experiment dict
+experiments_meta: dict[str, dict] = {}
+
 try:
     response = requests.get(f"{API_BASE}/api/v1/experiments/", headers=HEADERS, timeout=5)
     if response.ok:
@@ -54,13 +89,13 @@ with col_sel:
         key="monitor_exp_select",
     )
 experiment_id = experiments_dict[selected_label]
-
-# Keep session state in sync
 st.session_state["active_experiment_id"] = experiment_id
 
 st.divider()
 
-# --- Monitor Selected Experiment ---
+# ---------------------------------------------------------------------------
+# Live status + progress
+# ---------------------------------------------------------------------------
 try:
     progress_resp = requests.get(
         f"{API_BASE}/api/v1/experiments/{experiment_id}/progress",
@@ -73,7 +108,7 @@ try:
         progress = exp_data.get("progress_pct", 0)
         stage = exp_data.get("current_stage", "N/A")
 
-        # ── Status badge ───────────────────────────────────────────────
+        # ── Status badge ──────────────────────────────────────────────────
         if status == "completed":
             st.success("✅ **Status: COMPLETED**")
         elif status == "failed":
@@ -85,13 +120,13 @@ try:
         else:
             st.markdown(f"**Status:** {status.upper()}")
 
-        # ── Progress bar ───────────────────────────────────────────────
+        # ── Progress bar ──────────────────────────────────────────────────
         st.progress(
             progress / 100.0,
             text=f"{progress}% Complete — Current Stage: {str(stage).title()}",
         )
 
-        # ── Fetch full experiment detail to show mode + config ─────────
+        # ── Full experiment detail: mode + config ─────────────────────────
         full_resp = requests.get(
             f"{API_BASE}/api/v1/experiments/{experiment_id}",
             headers=HEADERS,
@@ -101,7 +136,6 @@ try:
         if full_resp.ok:
             full_data = full_resp.json()
 
-        # Display analysis mode from stored config
         config_json: dict = full_data.get("config_json", {})
         analysis_mode: str = str(config_json.get("analysis_mode", "demo")).lower()
         mode_label = "🔬 Demo" if analysis_mode == "demo" else "🏭 Production"
@@ -124,7 +158,7 @@ try:
         st.caption(f"ℹ️ {mode_desc}")
         st.divider()
 
-        # ── Error detail ───────────────────────────────────────────────
+        # ── Error detail ──────────────────────────────────────────────────
         if status == "failed":
             error_msg = full_data.get("error_message", "Unknown error")
             st.error(f"**Error Details:** {error_msg}")
@@ -135,7 +169,78 @@ try:
             )
             st.page_link("pages/04_results.py", label="View Results Dashboard →", icon="📊")
 
-        # ── Auto-refresh while running ─────────────────────────────────
+        # ── Execution Log ─────────────────────────────────────────────────
+        st.subheader("🗂️ Execution Log")
+
+        events_resp = requests.get(
+            f"{API_BASE}/api/v1/experiments/{experiment_id}/events",
+            headers=HEADERS,
+            timeout=5,
+        )
+
+        if events_resp.ok:
+            events_data = events_resp.json()
+            events: list[dict] = events_data.get("events", [])
+
+            if not events:
+                st.info(
+                    "No execution events recorded yet. "
+                    "Events will appear here once the pipeline starts running."
+                )
+            else:
+                # Determine whether the last event is a failure
+                last_event = events[-1]
+                last_is_failure = last_event.get("event_type") == "experiment_failed"
+
+                with st.container():
+                    for idx, event in enumerate(events):
+                        ev_type: str = event.get("event_type", "unknown")
+                        phase: str | None = event.get("phase")
+                        payload: dict = event.get("payload") or {}
+                        message: str = payload.get("message", ev_type)
+                        created_at: str = event.get("created_at", "")
+
+                        # Format timestamp (ISO → readable)
+                        try:
+                            from datetime import datetime
+
+                            ts = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                            ts_label = ts.strftime("%H:%M:%S UTC")
+                        except Exception:
+                            ts_label = created_at[:19] if created_at else "—"
+
+                        icon = _EVENT_ICONS.get(ev_type, "📋")
+                        phase_icon = _PHASE_ICONS.get(phase or "", "")
+                        phase_tag = f" `{phase_icon} {phase}`" if phase else ""
+
+                        # Highlight the last event red on failure
+                        is_last_failure = (
+                            status == "failed" and idx == len(events) - 1 and last_is_failure
+                        )
+
+                        if is_last_failure:
+                            st.error(
+                                f"`{ts_label}` &nbsp; {icon} &nbsp; **{ev_type}**{phase_tag}\n\n"
+                                f"{message}"
+                            )
+                        elif ev_type == "experiment_completed":
+                            st.success(
+                                f"`{ts_label}` &nbsp; {icon} &nbsp; **{ev_type}**{phase_tag}\n\n"
+                                f"{message}"
+                            )
+                        else:
+                            st.markdown(
+                                f"`{ts_label}` &nbsp; {icon} &nbsp; **{ev_type}**{phase_tag}  \n"
+                                f"<small>{message}</small>",
+                                unsafe_allow_html=True,
+                            )
+
+                st.caption(f"Showing {len(events)} event(s) · oldest first")
+
+        else:
+            st.warning("Could not retrieve the execution log for this experiment.")
+
+        # ── Auto-refresh while running ────────────────────────────────────
         if status in ("running", "queued"):
             with st.spinner("Auto-refreshing every 3 seconds…"):
                 time.sleep(3)

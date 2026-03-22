@@ -2,7 +2,7 @@
 """
 Synthetic Dataset Generator — Invisible Variables Engine.
 
-Generates five curated demo datasets with planted hidden variables designed
+Generates six curated demo datasets with planted hidden variables designed
 to reliably showcase IVE's subgroup discovery and bootstrap validation
 capabilities.  Each dataset is accompanied by a ground-truth JSON metadata
 file so results can be verified against known answers.
@@ -345,6 +345,81 @@ def generate_control(n: int = DEFAULT_ROWS) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# Dataset 6: Customer Churn — hidden frustrated premium segment
+# ---------------------------------------------------------------------------
+
+
+def generate_churn(n: int = DEFAULT_ROWS) -> pd.DataFrame:
+    """Customer churn classification with a hidden *frustrated premium segment*.
+
+    Hidden rule:
+        When ``monthly_bill > 120`` AND ``support_calls > 4``,
+        add **+2.5 log-odds** to churn probability.  This creates a
+        sharply elevated churn rate (~80-90 %) for ~8-10 % of customers
+        who are both high-spending and high-contact, while baseline churn
+        sits around 15-20 %.
+
+    The target ``churned`` is binary (0/1), sampled from a logistic model.
+    """
+    rng = _rng(6)
+
+    tenure_months = rng.integers(1, 72, n).astype(float)
+    monthly_bill = rng.uniform(30, 200, n)
+    support_calls = rng.integers(0, 10, n).astype(float)
+    satisfaction_score = rng.uniform(1, 10, n)
+
+    # Base log-odds (logistic model)
+    logits = (
+        -1.0
+        - 0.02 * tenure_months
+        + 0.01 * monthly_bill
+        + 0.15 * support_calls
+        - 0.20 * satisfaction_score
+    )
+
+    # Hidden effect — frustrated premium segment
+    frustrated_mask = (monthly_bill > 120) & (support_calls > 4)
+    logits = np.where(frustrated_mask, logits + 2.5, logits)
+
+    # Convert log-odds → probability → binary label
+    prob_churn = 1.0 / (1.0 + np.exp(-logits))
+    churned = rng.binomial(1, prob_churn)
+
+    df = pd.DataFrame(
+        {
+            "tenure_months": tenure_months.astype(int),
+            "monthly_bill": np.round(monthly_bill, 2),
+            "support_calls": support_calls.astype(int),
+            "satisfaction_score": np.round(satisfaction_score, 1),
+            "churned": churned,
+        }
+    )
+
+    metadata = {
+        "dataset_name": "customer_churn_hidden_signal",
+        "target_column": "churned",
+        "hidden_variable_name": "frustrated_premium_segment",
+        "hidden_rule": "monthly_bill > 120 AND support_calls > 4 increases churn probability",
+        "affected_pct": round(float(frustrated_mask.mean()) * 100, 1),
+        "expected_detection_type": "subgroup",
+        "task_type": "classification",
+        "churn_rate_overall": round(float(churned.mean()) * 100, 1),
+        "churn_rate_hidden_group": round(float(churned[frustrated_mask].mean()) * 100, 1)
+        if frustrated_mask.sum() > 0
+        else 0.0,
+        "notes": (
+            "Binary churn demonstration dataset. The frustrated-premium segment "
+            "(monthly_bill > 120 AND support_calls > 4) has a dramatically higher "
+            "churn rate than the general population, creating a detectable subgroup "
+            "in the residuals of any standard classifier."
+        ),
+    }
+
+    _save(df, "customer_churn_hidden_signal", metadata)
+    return df
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -354,6 +429,7 @@ GENERATORS = [
     ("healthcare_hidden_risk", generate_healthcare),
     ("manufacturing_hidden_shift", generate_manufacturing),
     ("no_hidden_random_noise", generate_control),
+    ("customer_churn_hidden_signal", generate_churn),
 ]
 
 
@@ -393,9 +469,14 @@ def main() -> None:
         print(f"\n  ✓ {name}.csv")
         print(f"    Rows: {len(df):,}  |  Cols: {len(df.columns)}")
         print(f"    Target: {meta['target_column']}")
+        task_type = meta.get("task_type", "regression")
+        print(f"    Task type: {task_type}")
         print(f"    Hidden variable: {hidden}")
         if affected:
             print(f"    Affected rows: ~{affected}%")
+        if task_type == "classification":
+            print(f"    Overall churn rate: {meta.get('churn_rate_overall', '?')}%")
+            print(f"    Churn rate (hidden group): {meta.get('churn_rate_hidden_group', '?')}%")
 
     print("\n" + "=" * 60)
     print(f"  Generated {len(GENERATORS)} datasets + {len(GENERATORS)} metadata files.")

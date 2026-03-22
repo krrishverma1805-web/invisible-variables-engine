@@ -33,6 +33,8 @@ from ive.api.v1.schemas.experiment_schemas import (
     ErrorPatternResponse,
     ExperimentCreate,
     ExperimentCreateResponse,
+    ExperimentEventResponse,
+    ExperimentEventsListResponse,
     ExperimentListResponse,
     ExperimentProgressResponse,
     ExperimentResponse,
@@ -211,6 +213,46 @@ async def get_experiment_progress(
             detail=f"Experiment {experiment_id} not found.",
         )
     return ExperimentProgressResponse.model_validate(experiment)
+
+
+# ---------------------------------------------------------------------------
+# GET /experiments/{experiment_id}/events  — Execution log
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{experiment_id}/events",
+    response_model=ExperimentEventsListResponse,
+    summary="Get the execution event log for an experiment",
+)
+async def get_experiment_events(
+    experiment_id: UUID,
+    db: AsyncSession = Depends(get_db),
+) -> ExperimentEventsListResponse:
+    """Return the chronological audit log of pipeline lifecycle events.
+
+    Each event records a discrete milestone (e.g. ``dataset_loaded``,
+    ``modeling_completed``) along with a human-readable message and
+    optional metadata captured at the time the event occurred.
+
+    Events are sorted oldest-first so they read like a sequential log.
+    If the experiment has not yet produced any events (e.g. it is still
+    queued), an empty list is returned.
+    """
+    exp_repo = ExperimentRepository(db, Experiment)
+    experiment = await exp_repo.get_by_id(experiment_id)
+    if experiment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Experiment {experiment_id} not found.",
+        )
+
+    events = await exp_repo.get_events(experiment_id)
+    return ExperimentEventsListResponse(
+        experiment_id=experiment_id,
+        events=[ExperimentEventResponse.model_validate(e) for e in events],
+        total=len(events),
+    )
 
 
 # ---------------------------------------------------------------------------

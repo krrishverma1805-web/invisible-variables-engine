@@ -8,6 +8,7 @@ clustering, SHAP, and bootstrap tests — no database or filesystem access.
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 import pytest
 
 
@@ -23,6 +24,21 @@ def small_X_y() -> tuple[np.ndarray, np.ndarray]:
     X = rng.standard_normal((n, 4))
     y = 2.0 * X[:, 0] - X[:, 1] + 0.5 * X[:, 2] + rng.standard_normal(n) * 0.3
     return X, y
+
+
+@pytest.fixture
+def simple_regression_df() -> pd.DataFrame:
+    """Small 150-row regression DataFrame with two numeric features and a target.
+
+    Relationship: ``y ≈ 3·x1 − 2·x2 + noise``.
+    Suitable for DataPreprocessor, SubgroupDiscovery, and VariableSynthesizer tests.
+    """
+    rng = np.random.default_rng(17)
+    n = 150
+    x1 = rng.standard_normal(n)
+    x2 = rng.standard_normal(n)
+    y = 3.0 * x1 - 2.0 * x2 + rng.standard_normal(n) * 0.5
+    return pd.DataFrame({"x1": x1, "x2": x2, "y": y})
 
 
 @pytest.fixture

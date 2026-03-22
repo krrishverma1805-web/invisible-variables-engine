@@ -22,7 +22,7 @@ from sqlalchemy import desc, insert, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
-from ive.db.models import ErrorPattern, Experiment, Residual, TrainedModel
+from ive.db.models import ErrorPattern, Experiment, ExperimentEvent, Residual, TrainedModel
 from ive.db.repositories.base_repo import BaseRepository
 
 log = structlog.get_logger(__name__)
@@ -417,5 +417,74 @@ class ExperimentRepository(BaseRepository[Experiment]):
             select(ErrorPattern)
             .where(ErrorPattern.experiment_id == experiment_id)
             .order_by(desc(ErrorPattern.effect_size))
+        )
+        return list(result.scalars().all())
+
+    # ------------------------------------------------------------------
+    # Experiment event log
+    # ------------------------------------------------------------------
+
+    async def add_event(
+        self,
+        experiment_id: uuid.UUID,
+        event_type: str,
+        message: str,
+        phase: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> ExperimentEvent:
+        """Append a single event to the experiment audit log.
+
+        Events are append-only; they are never updated or deleted.  Each
+        event captures a discrete lifecycle milestone (e.g. ``dataset_loaded``,
+        ``modeling_completed``) along with a human-readable ``message`` and
+        an optional ``metadata`` payload stored as JSONB.
+
+        Args:
+            experiment_id: UUID of the parent experiment.
+            event_type:    Machine-readable event identifier.
+            message:       Human-readable description of the event.
+            phase:         Optional pipeline phase label
+                           (``understand`` / ``model`` / ``detect`` / ``construct``).
+            metadata:      Optional supplementary data to persist as JSONB.
+
+        Returns:
+            The newly created ``ExperimentEvent`` ORM instance.
+        """
+        event = ExperimentEvent(
+            experiment_id=experiment_id,
+            event_type=event_type,
+            phase=phase,
+            payload={"message": message, **(metadata or {})},
+        )
+        self.session.add(event)
+        await self.session.flush()
+        log.debug(
+            "experiment_event.created",
+            experiment_id=str(experiment_id),
+            event_type=event_type,
+            phase=phase,
+        )
+        return event
+
+    async def get_events(
+        self,
+        experiment_id: uuid.UUID,
+        *,
+        limit: int = 200,
+    ) -> list[ExperimentEvent]:
+        """Return the audit-log events for an experiment in chronological order.
+
+        Args:
+            experiment_id: UUID of the parent experiment.
+            limit:         Maximum events to return (default 200).
+
+        Returns:
+            List of ``ExperimentEvent`` rows ordered by ``created_at`` ascending.
+        """
+        result = await self.session.execute(
+            select(ExperimentEvent)
+            .where(ExperimentEvent.experiment_id == experiment_id)
+            .order_by(ExperimentEvent.created_at)
+            .limit(limit)
         )
         return list(result.scalars().all())

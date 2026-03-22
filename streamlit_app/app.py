@@ -2,6 +2,7 @@ import os
 
 import requests
 import streamlit as st
+from components.sidebar import render_release_metadata
 
 st.set_page_config(
     page_title="Invisible Variables Engine",
@@ -20,6 +21,8 @@ with st.sidebar:
     st.page_link("pages/02_configure.py", label="2. Configure Experiment", icon="⚙️")
     st.page_link("pages/03_monitor.py", label="3. Monitor Progress", icon="⏳")
     st.page_link("pages/04_results.py", label="4. View Results", icon="📊")
+
+    render_release_metadata()
 
 # --- Main Page ---
 st.title("🔍 Invisible Variables Engine")

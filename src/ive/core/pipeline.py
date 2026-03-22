@@ -23,6 +23,7 @@ This module also preserves the legacy data-structure types
 from __future__ import annotations
 
 import io
+import json
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -52,6 +53,85 @@ if TYPE_CHECKING:
     from ive.api.v1.schemas.experiment_schemas import ExperimentConfig
 
 log = structlog.get_logger(__name__)
+
+# ---------------------------------------------------------------------------
+# Experiment event helper — independent of the ORM session
+# ---------------------------------------------------------------------------
+# Each event is written in its own psycopg2 transaction so that:
+#  a) events are immediately visible (not deferred to the end of the
+#     SQLAlchemy session commit);
+#  b) failure of the main pipeline does NOT roll back the events —
+#     the audit log survives even for failed experiments.
+# ---------------------------------------------------------------------------
+
+
+def _record_event(
+    experiment_id: uuid.UUID,
+    event_type: str,
+    message: str,
+    phase: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    """Write a single lifecycle event to ``experiment_events`` via psycopg2.
+
+    Uses a dedicated connection so the write is committed immediately,
+    independent of any active SQLAlchemy session.  Failures are logged but
+    never re-raised — event persistence must never abort the pipeline.
+
+    Args:
+        experiment_id: UUID of the parent experiment.
+        event_type:    Machine-readable event identifier
+                       (e.g. ``"dataset_loaded"``).
+        message:       Human-readable description of the event.
+        phase:         Optional pipeline phase label
+                       (``understand`` / ``model`` / ``detect`` / ``construct``).
+        metadata:      Optional supplementary data stored as JSONB payload.
+    """
+    import psycopg2
+
+    from ive.config import get_settings
+
+    payload: dict[str, Any] = {"message": message, **(metadata or {})}
+    event_id = uuid.uuid4()
+
+    try:
+        settings = get_settings()
+        dsn = settings.sync_database_url.replace("postgresql+psycopg2://", "postgresql://")
+        conn = psycopg2.connect(dsn)
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO experiment_events
+                    (id, experiment_id, phase, event_type, payload, created_at)
+                VALUES (%s::uuid, %s::uuid, %s, %s, %s, NOW())
+                """,
+                (
+                    str(event_id),
+                    str(experiment_id),
+                    phase,
+                    event_type,
+                    json.dumps(payload),
+                ),
+            )
+            conn.commit()
+            log.debug(
+                "pipeline.event_recorded",
+                experiment_id=str(experiment_id),
+                event_type=event_type,
+                phase=phase,
+            )
+        finally:
+            conn.close()
+    except Exception as exc:
+        # Never let event-writing abort the pipeline.
+        log.warning(
+            "pipeline.event_record_failed",
+            experiment_id=str(experiment_id),
+            event_type=event_type,
+            error=str(exc),
+        )
+
 
 # ---------------------------------------------------------------------------
 # Legacy data-structure types (preserved for backward compatibility)
@@ -299,6 +379,12 @@ class IVEPipeline:
 
             await exp_repo.mark_started(experiment_id)
             await exp_repo.update_progress(experiment_id, 5, "understand")
+            _record_event(
+                experiment_id,
+                event_type="experiment_started",
+                message="Experiment accepted by the worker and pipeline execution has begun.",
+                phase="understand",
+            )
 
             self.logger.info(
                 "pipeline.start",
@@ -337,6 +423,20 @@ class IVEPipeline:
                 n_rows=len(df),
                 n_features=len(X.columns),
             )
+            _record_event(
+                experiment_id,
+                event_type="dataset_loaded",
+                message=(
+                    f"Dataset loaded successfully: {len(df):,} rows, "
+                    f"{len(X.columns)} feature columns, target: '{target_col}'."
+                ),
+                phase="understand",
+                metadata={
+                    "n_rows": len(df),
+                    "n_features": len(X.columns),
+                    "target_column": target_col,
+                },
+            )
             await exp_repo.update_progress(experiment_id, 20, "model")
 
             # ── Phase 2: Model — cross-validation ─────────────────────
@@ -347,6 +447,17 @@ class IVEPipeline:
             X_values = X.to_numpy(dtype=np.float64)
 
             all_residuals: list[dict[str, Any]] = []
+
+            _record_event(
+                experiment_id,
+                event_type="modeling_started",
+                message=(
+                    f"Cross-validation started with models: {', '.join(model_types)}, "
+                    f"{cv_folds} folds."
+                ),
+                phase="model",
+                metadata={"model_types": model_types, "cv_folds": cv_folds},
+            )
 
             for model_type in model_types:
                 model_cls, stratified = _MODEL_MAP.get(model_type, (LinearIVEModel, False))
@@ -403,6 +514,22 @@ class IVEPipeline:
                     mean_r2=round(cv_result.mean_score, 4),
                     residual_std=round(float(np.std(oof_resid)), 4),
                 )
+                _record_event(
+                    experiment_id,
+                    event_type="modeling_completed",
+                    message=(
+                        f"{model_type.capitalize()} cross-validation complete — "
+                        f"mean score: {cv_result.mean_score:.4f}, "
+                        f"residual std: {float(np.std(oof_resid)):.4f}."
+                    ),
+                    phase="model",
+                    metadata={
+                        "model_type": model_type,
+                        "mean_score": round(cv_result.mean_score, 4),
+                        "std_score": round(cv_result.std_score, 4),
+                        "residual_std": round(float(np.std(oof_resid)), 4),
+                    },
+                )
 
             await exp_repo.update_progress(experiment_id, 55, "detect")
 
@@ -426,6 +553,17 @@ class IVEPipeline:
                 sg_min_subgroup = 30
 
             all_patterns: list[dict[str, Any]] = []
+
+            _record_event(
+                experiment_id,
+                event_type="detection_started",
+                message=(
+                    f"Pattern detection started in {analysis_mode!r} mode using "
+                    f"{primary['model_type'].capitalize()} residuals."
+                ),
+                phase="detect",
+                metadata={"analysis_mode": analysis_mode, "residual_source": primary["model_type"]},
+            )
 
             sg = SubgroupDiscovery(min_effect_size=sg_effect_size, min_bin_samples=sg_min_subgroup)
             sg_patterns = sg.detect(X, residuals)
@@ -457,12 +595,37 @@ class IVEPipeline:
                 n_subgroup_patterns=len(sg_patterns),
                 n_cluster_patterns=len(cl_patterns),
             )
+            _record_event(
+                experiment_id,
+                event_type="detection_completed",
+                message=(
+                    f"Pattern detection complete: {len(sg_patterns)} subgroup pattern(s) "
+                    f"and {len(cl_patterns)} cluster pattern(s) identified "
+                    f"({len(all_patterns)} total)."
+                ),
+                phase="detect",
+                metadata={
+                    "n_subgroup_patterns": len(sg_patterns),
+                    "n_cluster_patterns": len(cl_patterns),
+                    "n_total_patterns": len(all_patterns),
+                },
+            )
             await exp_repo.update_progress(experiment_id, 75, "construct")
 
             # ── Phase 4: Construct — synthesis + validation ───────────
             explainer = ExplanationGenerator()
 
             if all_patterns:
+                _record_event(
+                    experiment_id,
+                    event_type="construction_started",
+                    message=(
+                        f"Latent variable synthesis and bootstrap validation started "
+                        f"for {len(all_patterns)} candidate pattern(s)."
+                    ),
+                    phase="construct",
+                    metadata={"n_input_patterns": len(all_patterns)},
+                )
                 synth = VariableSynthesizer()
                 candidates = synth.synthesize(all_patterns, X)
 
@@ -506,9 +669,31 @@ class IVEPipeline:
                     n_rejected=n_rejected,
                     analysis_mode=analysis_mode,
                 )
+                _record_event(
+                    experiment_id,
+                    event_type="construction_completed",
+                    message=(
+                        f"Bootstrap validation complete: {n_validated} latent variable(s) validated, "
+                        f"{n_rejected} rejected out of {len(candidates)} candidate(s)."
+                    ),
+                    phase="construct",
+                    metadata={
+                        "n_candidates": len(candidates),
+                        "n_validated": n_validated,
+                        "n_rejected": n_rejected,
+                        "analysis_mode": analysis_mode,
+                    },
+                )
             else:
                 validated = []
                 self.logger.info("pipeline.no_patterns_found")
+                _record_event(
+                    experiment_id,
+                    event_type="construction_completed",
+                    message="No patterns were detected; latent variable construction was skipped.",
+                    phase="construct",
+                    metadata={"n_candidates": 0, "n_validated": 0},
+                )
 
             # ── Generate experiment summary ───────────────────────────
             dataset_name = getattr(dataset, "name", "dataset")
@@ -522,9 +707,27 @@ class IVEPipeline:
 
             # ── Complete ──────────────────────────────────────────────
             await exp_repo.update_progress(experiment_id, 100, "complete")
-            await exp_repo.mark_completed(experiment_id)
 
             elapsed = round(time.perf_counter() - t_start, 2)
+
+            n_validated_final = sum(1 for v in validated if v.get("status") == "validated")
+            _record_event(
+                experiment_id,
+                event_type="experiment_completed",
+                message=(
+                    f"Experiment completed successfully in {elapsed}s — "
+                    f"{len(all_patterns)} pattern(s) detected, "
+                    f"{n_validated_final} latent variable(s) validated."
+                ),
+                phase="construct",
+                metadata={
+                    "elapsed_seconds": elapsed,
+                    "n_patterns": len(all_patterns),
+                    "n_validated": n_validated_final,
+                },
+            )
+            await exp_repo.mark_completed(experiment_id)
+
             self.logger.info(
                 "pipeline.complete",
                 experiment_id=str(experiment_id),
@@ -549,6 +752,13 @@ class IVEPipeline:
                 exc_info=True,
             )
             try:
+                _record_event(
+                    experiment_id,
+                    event_type="experiment_failed",
+                    message=f"Pipeline execution failed: {exc}",
+                    phase=None,
+                    metadata={"error": str(exc)[:1000]},
+                )
                 await exp_repo.mark_failed(experiment_id, str(exc))
             except Exception:
                 pass

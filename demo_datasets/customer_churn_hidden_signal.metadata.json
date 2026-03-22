@@ -1,0 +1,12 @@
+{
+  "dataset_name": "customer_churn_hidden_signal",
+  "target_column": "churned",
+  "hidden_variable_name": "frustrated_premium_segment",
+  "hidden_rule": "monthly_bill > 120 AND support_calls > 4 increases churn probability",
+  "affected_pct": 23.2,
+  "expected_detection_type": "subgroup",
+  "task_type": "classification",
+  "churn_rate_overall": 38.8,
+  "churn_rate_hidden_group": 87.1,
+  "notes": "Binary churn demonstration dataset. The frustrated-premium segment (monthly_bill > 120 AND support_calls > 4) has a dramatically higher churn rate than the general population, creating a detectable subgroup in the residuals of any standard classifier."
+}

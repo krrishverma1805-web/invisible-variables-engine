@@ -183,3 +183,34 @@ class ExperimentFullReportResponse(BaseModel):
     patterns: list[dict[str, Any]]
     latent_variables: list[dict[str, Any]]
     summary: ExperimentSummaryResponse
+
+
+# ---------------------------------------------------------------------------
+# Experiment event log
+# ---------------------------------------------------------------------------
+
+
+class ExperimentEventResponse(BaseModel):
+    """A single entry in the experiment audit / execution log.
+
+    Mirrors the ``ExperimentEvent`` ORM model.  The ``payload`` field
+    contains the human-readable ``message`` and any supplementary metadata
+    recorded at the time the event occurred.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    experiment_id: UUID
+    phase: str | None = None
+    event_type: str
+    payload: dict[str, Any] | None = None
+    created_at: datetime
+
+
+class ExperimentEventsListResponse(BaseModel):
+    """Chronological list of audit events for an experiment."""
+
+    experiment_id: UUID
+    events: list[ExperimentEventResponse]
+    total: int

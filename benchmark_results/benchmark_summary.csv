@@ -1,0 +1,7 @@
+dataset,rows,features,task_type,load_s,linear_s,xgb_s,detect_s,synth_boot_s,total_s,linear_score,xgb_score,patterns,validated,notes
+customer_churn_hidden_signal,3000,4,classification,0.006,0.069,0.000,0.359,0.000,0.439,0.8182,0.0000,0,0,
+delivery_hidden_weather,3000,4,regression,0.001,0.002,0.000,0.044,0.010,0.060,0.8477,0.0000,5,5,
+healthcare_hidden_risk,3000,4,regression,0.001,0.002,0.000,0.043,0.014,0.063,0.5889,0.0000,8,8,
+manufacturing_hidden_shift,3000,4,regression,0.001,0.002,0.000,0.045,0.009,0.059,0.6096,0.0000,5,5,
+no_hidden_random_noise,3000,4,regression,0.002,0.002,0.000,0.030,0.000,0.036,0.9094,0.0000,0,0,
+retail_hidden_promo,3000,4,regression,0.001,0.002,0.000,0.049,0.022,0.076,0.5266,0.0000,8,6,
