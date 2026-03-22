@@ -33,7 +33,7 @@ class IVEModel(ABC):
         ...
 
     @abstractmethod
-    def predict(self, X: np.ndarray) -> np.ndarray:
+    def predict(self, X: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
         """
         Generate predictions for the given feature matrix.
 
