@@ -119,7 +119,7 @@ class CrossValidator:
     # Public entry point
     # ------------------------------------------------------------------
 
-    def fit(self, X: np.ndarray, y: np.ndarray) -> CVResult:
+    def fit(self, X: np.ndarray[Any, Any], y: np.ndarray[Any, Any]) -> CVResult:
         """Run K-fold cross-validation and return OOF predictions + metrics.
 
         For each fold this method:
