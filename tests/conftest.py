@@ -188,3 +188,73 @@ def mock_artifact_store():
     store.delete_file = AsyncMock(return_value=None)
     store.file_exists = AsyncMock(return_value=False)
     return store
+
+
+# ---------------------------------------------------------------------------
+# Integration: TestClient + authentication
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session")
+def _test_env(monkeypatch_session=None):
+    """Force env vars required by the app so TestClient boots without real services.
+
+    Relies on the test process already having a .env.example-compatible
+    environment, OR on Docker Compose services being available.  The API key
+    is forced to ``test-key-1`` so integration tests don't need secrets.
+    """
+    import os
+
+    os.environ.setdefault("VALID_API_KEYS", "dev-key-1")
+    os.environ.setdefault("ENV", "development")
+    os.environ.setdefault("LOG_LEVEL", "WARNING")
+    os.environ.setdefault("ARTIFACT_STORE_TYPE", "local")
+    os.environ.setdefault("ARTIFACT_BASE_DIR", "/tmp/ive_test_artifacts")
+
+
+@pytest.fixture(scope="session")
+def api_client(_test_env):
+    """Session-scoped FastAPI TestClient.
+
+    Uses the real ``create_app()`` factory so all middleware (auth, rate-limit,
+    logging) is exercised.  DB / Redis connections are deferred to health-check
+    calls; endpoints that require them will need the Docker stack running.
+    """
+    from fastapi.testclient import TestClient
+
+    from ive.main import create_app
+
+    application = create_app()
+    # raise_server_exceptions=False: prevents asyncpg/DB connection errors from
+    # crashing tests that only check auth or health (DB not required for those).
+    with TestClient(application, raise_server_exceptions=False) as client:
+        yield client
+
+
+@pytest.fixture
+def authed_headers() -> dict[str, str]:
+    """Authorization headers using the integration test API key."""
+    return {"X-API-Key": "dev-key-1"}
+
+
+# ---------------------------------------------------------------------------
+# Integration: small CSV bytes (for upload tests)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def small_csv_bytes() -> bytes:
+    """150-row regression CSV with a hidden subgroup effect."""
+    import importlib
+
+    m = importlib.import_module("tests.fixtures.demo_csv_files")
+    return m.make_regression_with_subgroup(n=150, seed=42)
+
+
+@pytest.fixture
+def no_signal_csv_bytes() -> bytes:
+    """150-row pure-noise CSV — no discoverable hidden variable."""
+    import importlib
+
+    m = importlib.import_module("tests.fixtures.demo_csv_files")
+    return m.make_pure_noise(n=150, seed=99)
