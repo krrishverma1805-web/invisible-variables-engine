@@ -85,7 +85,7 @@ class XGBoostIVEModel(IVEModel):
         self._model.fit(X, y)
         self._fitted = True
 
-    def predict(self, X: np.ndarray) -> np.ndarray:
+    def predict(self, X: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
         """Return XGBoost predictions."""
         if not self._fitted or self._model is None:
             raise RuntimeError("Model must be fitted before predict().")
