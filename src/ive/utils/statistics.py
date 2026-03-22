@@ -33,7 +33,7 @@ def cohens_d(group1: np.ndarray[Any, Any], group2: np.ndarray[Any, Any]) -> floa
     return float((group1.mean() - group2.mean()) / pooled_std) if pooled_std != 0 else 0.0
 
 
-def cramers_v(confusion_matrix: np.ndarray) -> float:
+def cramers_v(confusion_matrix: np.ndarray[Any, Any]) -> float:
     """
     Compute Cramér's V association measure for categorical variables.
 
