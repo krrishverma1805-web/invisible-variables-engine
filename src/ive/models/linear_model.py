@@ -43,7 +43,7 @@ class LinearIVEModel(IVEModel):
     def model_name(self) -> str:
         return "linear"
 
-    def fit(self, X: np.ndarray, y: np.ndarray) -> None:
+    def fit(self, X: np.ndarray[Any, Any], y: np.ndarray[Any, Any]) -> None:
         """
         Fit Ridge regression on the training data.
 
