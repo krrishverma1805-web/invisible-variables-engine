@@ -6,28 +6,30 @@ on:
   pull_request:
     branches: ["main"]
 
-jobs:
-  test:
-    runs-on: ubuntu-latest
+env:
+  # Application
+  ENV: ci
+  LOG_LEVEL: WARNING
+  SECRET_KEY: ci-secret-key-not-for-production-use-at-all
+  VALID_API_KEYS: dev-key-1
 
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_USER: ive_user
-          POSTGRES_PASSWORD: ive_password
-          POSTGRES_DB: ive_db
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-      redis:
-        image: redis:7
-        ports:
-          - 6379:6379
+  # Database — aligned with the postgres service container below
+  DATABASE_URL: postgresql+asyncpg://ive_user:ive_password@localhost:5432/ive_db
+  SYNC_DATABASE_URL: postgresql+psycopg2://ive_user:ive_password@localhost:5432/ive_db
+
+  # Redis — aligned with the redis service container below
+  REDIS_URL: redis://localhost:6379/0
+  REDIS_HOST: localhost
+  REDIS_PORT: 6379
+
+  # Artifact storage (local, no S3 needed in CI)
+  ARTIFACT_STORE_TYPE: local
+  ARTIFACT_BASE_DIR: /tmp/ive_ci_artifacts
+
+jobs:
+  lint:
+    name: Lint & Type-Check
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
@@ -44,33 +46,152 @@ jobs:
           virtualenvs-create: true
           virtualenvs-in-project: true
 
-      - name: Load cached venv
-        id: cached-poetry-dependencies
+      - name: Cache virtual environment
+        id: cached-venv
         uses: actions/cache@v4
         with:
           path: .venv
-          key: venv-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/poetry.lock') }}
+          key: venv-${{ runner.os }}-3.11-${{ hashFiles('**/poetry.lock') }}
 
       - name: Install dependencies
-        if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
+        if: steps.cached-venv.outputs.cache-hit != 'true'
         run: poetry install --no-interaction --no-root --with dev
 
-      - name: Run Linters (Ruff & Mypy)
-        run: make check
+      - name: Ruff — lint
+        run: poetry run ruff check src tests
 
-      - name: Run Tests (Fast)
-        env:
-          DB_HOST: localhost
-          DB_PORT: 5432
-          DB_USER: ive_user
-          DB_PASSWORD: ive_password
-          DB_NAME: ive_db
-          REDIS_HOST: localhost
-          REDIS_PORT: 6379
-        run: make test-fast
+      - name: Ruff — format check
+        run: poetry run ruff format --check src tests
 
-      - name: Upload coverage
+      - name: Mypy — type check
+        run: poetry run mypy src
+
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: lint
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: 1.8.3
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+
+      - name: Cache virtual environment
+        id: cached-venv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-3.11-${{ hashFiles('**/poetry.lock') }}
+
+      - name: Install dependencies
+        if: steps.cached-venv.outputs.cache-hit != 'true'
+        run: poetry install --no-interaction --no-root --with dev
+
+      - name: Run unit tests
+        run: |
+          poetry run pytest tests/unit/ \
+            -v \
+            --tb=short \
+            --cov=src/ive \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage.xml
+
+      - name: Upload coverage report
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-report
-          path: htmlcov/
+          name: unit-coverage
+          path: coverage.xml
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: unit-tests
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: ive_user
+          POSTGRES_PASSWORD: ive_password
+          POSTGRES_DB: ive_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: 1.8.3
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+
+      - name: Cache virtual environment
+        id: cached-venv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-3.11-${{ hashFiles('**/poetry.lock') }}
+
+      - name: Install dependencies
+        if: steps.cached-venv.outputs.cache-hit != 'true'
+        run: poetry install --no-interaction --no-root --with dev
+
+      - name: Wait for PostgreSQL and Redis
+        run: |
+          echo "Waiting for PostgreSQL to be ready..."
+          for i in $(seq 1 30); do
+            pg_isready -h localhost -p 5432 -U ive_user && break
+            echo "  attempt $i/30 — not ready yet, retrying in 2s"
+            sleep 2
+          done
+          pg_isready -h localhost -p 5432 -U ive_user || (echo "PostgreSQL did not become ready" && exit 1)
+
+          echo "Waiting for Redis to be ready..."
+          for i in $(seq 1 30); do
+            redis-cli -h localhost -p 6379 ping | grep -q PONG && break
+            echo "  attempt $i/30 — not ready yet, retrying in 2s"
+            sleep 2
+          done
+          redis-cli -h localhost -p 6379 ping | grep -q PONG || (echo "Redis did not become ready" && exit 1)
+
+      - name: Run database migrations
+        run: poetry run alembic upgrade head
+
+      - name: Run integration tests
+        run: |
+          poetry run pytest tests/integration/ \
+            -v \
+            --tb=short \
+            -m "not slow"
