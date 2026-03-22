@@ -65,7 +65,7 @@ class CVResult:
 
     model_name: str
     n_splits: int
-    oof_predictions: np.ndarray
+    oof_predictions: np.ndarray[Any, Any]
     oof_residuals: np.ndarray
     fold_assignments: np.ndarray  # int array, length = n_samples
     fold_scores: list[float] = field(default_factory=list)
