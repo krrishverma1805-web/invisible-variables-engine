@@ -245,9 +245,9 @@ class ResidualAnalyzer:
     def build_residual_records(
         self,
         X_df: pd.DataFrame,
-        y_true: np.ndarray | pd.Series,
-        oof_predictions: np.ndarray,
-        fold_assignments: np.ndarray,
+        y_true: np.ndarray[Any, Any] | pd.Series,
+        oof_predictions: np.ndarray[Any, Any],
+        fold_assignments: np.ndarray[Any, Any],
         task_type: str = "regression",
     ) -> list[dict[str, Any]]:
         """Build structured per-sample residual records for database storage.
