@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from typing import Any
 import numpy as np
 import structlog
 
@@ -47,7 +48,7 @@ class TemporalAnalyzer:
     def analyze(
         self,
         df: object,  # pd.DataFrame
-        residuals: np.ndarray,
+        residuals: np.ndarray[Any, Any],
         datetime_columns: list[str],
     ) -> list[TemporalPattern]:
         """
