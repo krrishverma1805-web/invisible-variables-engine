@@ -13,6 +13,7 @@ to Phase 4 for variable construction.
 """
 
 from __future__ import annotations
+from typing import Any
 
 from dataclasses import dataclass, field
 
@@ -38,7 +39,7 @@ class ScoredPattern:
     stability: float = 0.0
     composite_score: float = 0.0
     feature_references: list[str] = field(default_factory=list)
-    sample_mask: np.ndarray | None = None
+    sample_mask: np.ndarray[Any, Any] | None = None
 
 
 class PatternScorer:
@@ -54,8 +55,8 @@ class PatternScorer:
     def score_and_rank(
         self,
         raw_patterns: list[object],
-        residuals: np.ndarray,
-        cluster_labels: np.ndarray | None = None,
+        residuals: np.ndarray[Any, Any],
+        cluster_labels: np.ndarray[Any, Any] | None = None,
         top_k: int = 20,
     ) -> list[ScoredPattern]:
         """
