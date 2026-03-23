@@ -103,7 +103,7 @@ class DataPreprocessor:
         # TODO: Real transform
         return np.zeros((len(df) if df is not None else 0, len(feature_columns)))
 
-    def inverse_transform_column(self, col_name: str, values: np.ndarray) -> np.ndarray:
+    def inverse_transform_column(self, col_name: str, values: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
         """
         Inverse-transform a single feature column back to original space.
 
