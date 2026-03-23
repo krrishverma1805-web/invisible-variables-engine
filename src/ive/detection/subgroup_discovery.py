@@ -159,7 +159,7 @@ class SubgroupDiscovery:
         )
 
         # ── Pass 1: Build bins and count total tests ───────────────────
-        column_bins: list[tuple[str, list[tuple[str, np.ndarray]]]] = []
+        column_bins: list[tuple[str, list[tuple[str, np.ndarray[Any, Any]]]]] = []
         num_total_bins_tested = 0
 
         for col in X.columns:
@@ -230,7 +230,7 @@ class SubgroupDiscovery:
         self,
         series: pd.Series,
         col_name: str,
-    ) -> list[tuple[str, np.ndarray]]:
+    ) -> list[tuple[str, np.ndarray[Any, Any]]]:
         """Partition a single column into labelled bins with boolean masks.
 
         Numeric columns are binned into up to ``self.n_bins`` quantiles via
@@ -248,7 +248,7 @@ class SubgroupDiscovery:
         Returns:
             List of ``(bin_label, boolean_mask_array)`` tuples.
         """
-        bins: list[tuple[str, np.ndarray]] = []
+        bins: list[tuple[str, np.ndarray[Any, Any]]] = []
 
         if pd.api.types.is_numeric_dtype(series):
             bins = self._bin_numeric(series, col_name)
@@ -261,7 +261,7 @@ class SubgroupDiscovery:
         self,
         series: pd.Series,
         col_name: str,
-    ) -> list[tuple[str, np.ndarray]]:
+    ) -> list[tuple[str, np.ndarray[Any, Any]]]:
         """Bin a numeric column into quantile-based groups.
 
         Strategy cascade:
@@ -311,7 +311,7 @@ class SubgroupDiscovery:
             return [("all", mask)]
 
         # Build mask for each bin label
-        result: list[tuple[str, np.ndarray]] = []
+        result: list[tuple[str, np.ndarray[Any, Any]]] = []
         for cat in labels.cat.categories:
             mask = (labels == cat).values.astype(bool)
             if mask.sum() > 0:
@@ -320,7 +320,7 @@ class SubgroupDiscovery:
         return result
 
     @staticmethod
-    def _bin_categorical(series: pd.Series) -> list[tuple[str, np.ndarray]]:
+    def _bin_categorical(series: pd.Series) -> list[tuple[str, np.ndarray[Any, Any]]]:
         """Bin a categorical or boolean column by unique value.
 
         ``NaN`` values are skipped — they do not form their own bin.
@@ -331,7 +331,7 @@ class SubgroupDiscovery:
         Returns:
             List of ``(value_str, boolean_mask)`` tuples.
         """
-        result: list[tuple[str, np.ndarray]] = []
+        result: list[tuple[str, np.ndarray[Any, Any]]] = []
         for val in series.dropna().unique():
             mask = (series == val).values.astype(bool)
             if mask.sum() > 0:
