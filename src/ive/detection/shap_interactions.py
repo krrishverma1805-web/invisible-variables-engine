@@ -9,6 +9,7 @@ These insights guide subgroup discovery and latent variable naming in Phase 4.
 """
 
 from __future__ import annotations
+from typing import Any
 
 from dataclasses import dataclass, field
 
@@ -22,8 +23,8 @@ log = structlog.get_logger(__name__)
 class SHAPResult:
     """Container for SHAP analysis outputs."""
 
-    shap_values: np.ndarray  # (n_samples, n_features)
-    shap_interaction_values: np.ndarray | None = None  # (n_samples, n_features, n_features)
+    shap_values: np.ndarray[Any, Any]  # (n_samples, n_features)
+    shap_interaction_values: np.ndarray[Any, Any] | None = None  # (n_samples, n_features, n_features)
     mean_abs_shap: dict[str, float] = field(default_factory=dict)
     top_interaction_pairs: list[tuple[str, str, float]] = field(default_factory=list)
     feature_names: list[str] = field(default_factory=list)
@@ -47,7 +48,7 @@ class SHAPInteractionAnalyzer:
     def compute(
         self,
         model: object,  # IVEModel instance (XGBoostIVEModel preferred)
-        X: np.ndarray,
+        X: np.ndarray[Any, Any],
         feature_names: list[str],
         compute_interactions: bool = True,
     ) -> SHAPResult:
