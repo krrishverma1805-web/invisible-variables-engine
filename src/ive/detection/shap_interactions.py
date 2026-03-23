@@ -87,7 +87,7 @@ class SHAPInteractionAnalyzer:
             for i, fname in enumerate(feature_names)
         }
 
-        interaction_values: np.ndarray | None = None
+        interaction_values: np.ndarray[Any, Any] | None = None
         top_pairs: list[tuple[str, str, float]] = []
 
         # TODO: Compute interactions for XGBoost models
