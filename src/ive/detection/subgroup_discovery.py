@@ -371,7 +371,7 @@ class SubgroupDiscoverer:
     def discover(
         self,
         df: object,
-        residuals: np.ndarray,
+        residuals: np.ndarray[Any, Any],
         feature_columns: list[str],
         top_k: int = 20,
     ) -> list[SubgroupPattern]:
@@ -443,7 +443,7 @@ class SubgroupDiscoverer:
         coverage = sample_count / total_samples
         return coverage * (mean_residual - global_mean)
 
-    def _compute_wracc(self, mask: np.ndarray, residuals: np.ndarray) -> float:
+    def _compute_wracc(self, mask: np.ndarray[Any, Any], residuals: np.ndarray[Any, Any]) -> float:
         """Compute WRAcc for a given boolean mask.
 
         Args:
@@ -459,7 +459,7 @@ class SubgroupDiscoverer:
         return coverage * (float(np.mean(residuals[mask])) - float(np.mean(residuals)))
 
     @staticmethod
-    def _cohens_d(group1: np.ndarray, group2: np.ndarray) -> float:
+    def _cohens_d(group1: np.ndarray[Any, Any], group2: np.ndarray[Any, Any]) -> float:
         """Compute Cohen's *d* effect size between two groups.
 
         Uses the pooled standard deviation as the denominator.
