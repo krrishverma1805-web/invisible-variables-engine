@@ -25,7 +25,7 @@ variable density.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -50,7 +50,7 @@ _MIN_SAMPLES_FOR_CLUSTERING: int = 30  # below this, clustering is pointless
 class ClusteringResult:
     """Output of the legacy :class:`HDBSCANClusterer.fit` method."""
 
-    labels: np.ndarray
+    labels: np.ndarray[Any, Any]
     n_clusters: int = 0
     noise_fraction: float = 0.0
     cluster_stats: dict[int, dict[str, float]] = field(default_factory=dict)
@@ -91,7 +91,7 @@ class HDBSCANClustering:
     def detect(
         self,
         X: pd.DataFrame,
-        abs_residuals: np.ndarray,
+        abs_residuals: np.ndarray[Any, Any],
         min_cluster_size: int = 15,
     ) -> list[dict[str, Any]]:
         """Discover clusters among high-error samples.
