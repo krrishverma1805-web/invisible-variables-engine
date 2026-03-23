@@ -67,13 +67,13 @@ class SubgroupPattern:
     """A discovered subgroup pattern with its quality metrics."""
 
     rule: str
-    conditions: list[dict]
+    conditions: list[dict[str, Any]]
     coverage: float = 0.0
     wracc: float = 0.0
     mean_residual: float = 0.0
     mean_residual_outside: float = 0.0
     effect_size: float = 0.0
-    sample_mask: np.ndarray | None = None
+    sample_mask: np.ndarray[Any, Any] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +112,7 @@ class SubgroupDiscovery:
     def detect(
         self,
         X: pd.DataFrame,
-        residuals: np.ndarray,
+        residuals: np.ndarray[Any, Any],
         alpha: float = 0.05,
     ) -> list[dict[str, Any]]:
         """Scan all columns of *X* for residual-distributional anomalies.
