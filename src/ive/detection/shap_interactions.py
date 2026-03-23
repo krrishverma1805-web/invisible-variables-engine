@@ -105,7 +105,7 @@ class SHAPInteractionAnalyzer:
 
     def _rank_interaction_pairs(
         self,
-        interaction_values: np.ndarray,
+        interaction_values: np.ndarray[Any, Any],
         feature_names: list[str],
         top_k: int = 10,
     ) -> list[tuple[str, str, float]]:
