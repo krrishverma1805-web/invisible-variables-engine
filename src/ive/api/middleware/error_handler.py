@@ -21,6 +21,7 @@ Response envelope (all errors)::
 from __future__ import annotations
 
 import traceback
+from typing import Any
 
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -49,10 +50,10 @@ def _make_error(
     code: str,
     message: str,
     request_id: str | None = None,
-    details: list | None = None,
+    details: list[Any] | None = None,
 ) -> JSONResponse:
     """Build a structured JSON error response."""
-    body: dict = {
+    body: dict[str, Any] = {
         "error": {
             "code": code,
             "message": message,

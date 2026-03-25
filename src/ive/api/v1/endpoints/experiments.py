@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import io
 import json
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -137,7 +138,7 @@ async def create_experiment(
 async def list_experiments(
     dataset_id: UUID | None = Query(None, description="Filter by dataset UUID"),
     experiment_status: str | None = Query(None, alias="status", description="Filter by status"),
-    pagination: dict = Depends(get_pagination),
+    pagination: dict[str, Any] = Depends(get_pagination),
     db: AsyncSession = Depends(get_db),
 ) -> ExperimentListResponse:
     """Return a paginated list of experiments with optional filters."""
@@ -300,7 +301,7 @@ async def get_experiment_latent_variables(
         alias="status",
         description="Filter by status: candidate | validated | rejected",
     ),
-    pagination: dict = Depends(get_pagination),
+    pagination: dict[str, Any] = Depends(get_pagination),
     db: AsyncSession = Depends(get_db),
 ) -> LatentVariableListResponse:
     """Return all latent variables discovered for the given experiment."""
@@ -504,7 +505,7 @@ async def get_experiment_report(
     exp_dict = ExperimentResponse.model_validate(experiment).model_dump(mode="json")
 
     # Fetch and serialise dataset
-    dataset_dict: dict = {}
+    dataset_dict: dict[str, Any] = {}
     ds_repo = DatasetRepository(db, Dataset)
     dataset = await ds_repo.get_by_id(experiment.dataset_id)
     if dataset is not None:
@@ -656,7 +657,7 @@ async def export_latent_variables_csv(
 # ---------------------------------------------------------------------------
 
 
-def _orm_to_dict(obj: object) -> dict:
+def _orm_to_dict(obj: object) -> dict[str, Any]:
     """Serialise a SQLAlchemy ORM instance to a plain dict.
 
     Uses ``__dict__`` and strips the SQLAlchemy internal ``_sa_instance_state``
@@ -673,7 +674,7 @@ def _orm_to_dict(obj: object) -> dict:
     from uuid import UUID as _UUID
 
     raw = {k: v for k, v in obj.__dict__.items() if not k.startswith("_")}
-    out: dict = {}
+    out: dict[str, Any] = {}
     for k, v in raw.items():
         if isinstance(v, _UUID):
             out[k] = str(v)

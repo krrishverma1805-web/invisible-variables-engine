@@ -20,6 +20,7 @@ NOTE: ``slowapi`` must be in ``pyproject.toml`` (``slowapi = "^0.1.9"``).
 from __future__ import annotations
 
 from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 from ive.config import get_settings
 from ive.utils.logging import get_logger
@@ -86,10 +87,8 @@ def setup_rate_limiter(app: FastAPI) -> None:
     )
 
 
-async def _custom_rate_limit_handler(request: Request, exc: Exception) -> None:
+async def _custom_rate_limit_handler(request: Request, exc: Exception) -> JSONResponse:
     """Return a structured JSON 429 response when the rate limit is exceeded."""
-    from fastapi.responses import JSONResponse
-
     settings = get_settings()
     retry_after = settings.rate_limit_window
 

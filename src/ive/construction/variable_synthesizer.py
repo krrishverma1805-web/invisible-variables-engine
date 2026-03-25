@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import math
 import re
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -445,12 +445,12 @@ def _try_parse_numeric(value: str) -> float | None:
 
 
 def _apply_numeric_interval(
-    values: np.ndarray,
+    values: np.ndarray[Any, Any],
     lower: float,
     upper: float,
     left_closed: bool,
     right_closed: bool,
-) -> np.ndarray:
+) -> np.ndarray[Any, Any]:
     """Apply an interval membership test to a numeric array.
 
     NaN values are treated as *not* belonging to any interval and
@@ -490,7 +490,7 @@ def apply_construction_rule(
     rule: dict[str, Any],
     pattern_type: str,
     X: pd.DataFrame,
-) -> np.ndarray:
+) -> np.ndarray[Any, Any]:
     """Re-apply a construction rule to a (potentially resampled) DataFrame.
 
     This is the single source of truth for synthesising scores from a
@@ -539,7 +539,7 @@ def _apply_subgroup_rule(
     rule: dict[str, Any],
     X: pd.DataFrame,
     n: int,
-) -> np.ndarray:
+) -> np.ndarray[Any, Any]:
     """Apply a subgroup construction rule to a DataFrame.
 
     Dispatches to the correct reconstruction path based on
@@ -625,8 +625,11 @@ def _apply_subgroup_rule(
             try:
                 col_values = X[col].values.astype(np.float64)
                 safe_values = np.nan_to_num(col_values, nan=np.inf)
-                return np.isclose(safe_values, float(exact_value), atol=1e-9).astype(
-                    np.float64,
+                return cast(
+                    np.ndarray[Any, Any],
+                    np.isclose(safe_values, float(exact_value), atol=1e-9).astype(
+                        np.float64,
+                    ),
                 )
             except (ValueError, TypeError):
                 log.warning(
@@ -668,14 +671,20 @@ def _apply_subgroup_rule(
                 try:
                     col_values = X[col].values.astype(np.float64)
                     safe_values = np.nan_to_num(col_values, nan=np.inf)
-                    return np.isclose(safe_values, parsed, atol=1e-9).astype(
-                        np.float64,
+                    return cast(
+                        np.ndarray[Any, Any],
+                        np.isclose(safe_values, parsed, atol=1e-9).astype(
+                            np.float64,
+                        ),
                     )
                 except (ValueError, TypeError):
                     pass
 
         # Pure string comparison
-        return (X[col].astype(str) == value).astype(np.float64).values
+        return cast(
+            np.ndarray[Any, Any],
+            (X[col].astype(str) == value).astype(np.float64).values,
+        )
 
     # Unrecognised subgroup_type — log and return zeros
     log.warning(
@@ -690,7 +699,7 @@ def _apply_cluster_rule(
     rule: dict[str, Any],
     X: pd.DataFrame,
     n: int,
-) -> np.ndarray:
+) -> np.ndarray[Any, Any]:
     """Apply a cluster construction rule to a DataFrame.
 
     Computes the inverse-distance kernel score for each row relative
@@ -716,4 +725,4 @@ def _apply_cluster_rule(
 
     diff = sample_matrix - center_vec
     distances = np.sqrt(np.sum(diff**2, axis=1))
-    return 1.0 / (1.0 + distances)
+    return cast(np.ndarray[Any, Any], 1.0 / (1.0 + distances))

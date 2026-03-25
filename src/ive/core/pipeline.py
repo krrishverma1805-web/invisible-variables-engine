@@ -151,7 +151,7 @@ class LatentVariableCandidate:
     coverage_pct: float = 0.0
     candidate_features: list[str] = field(default_factory=list)
     validation: dict[str, float] = field(default_factory=dict)
-    cluster_labels: np.ndarray | None = None
+    cluster_labels: np.ndarray[Any, Any] | None = None
     feature_importance: dict[str, float] = field(default_factory=dict)
 
 
@@ -180,15 +180,15 @@ class PipelineContext:
     target_series: pd.Series | None = None
     feature_columns: list[str] = field(default_factory=list)
 
-    residuals: np.ndarray | None = None
-    predictions: np.ndarray | None = None
+    residuals: np.ndarray[Any, Any] | None = None
+    predictions: np.ndarray[Any, Any] | None = None
     model_artifacts: dict[str, Any] = field(default_factory=dict)
-    feature_matrix: np.ndarray | None = None
+    feature_matrix: np.ndarray[Any, Any] | None = None
 
     patterns: list[dict[str, Any]] = field(default_factory=list)
-    cluster_labels: np.ndarray | None = None
-    shap_values: np.ndarray | None = None
-    shap_interaction_values: np.ndarray | None = None
+    cluster_labels: np.ndarray[Any, Any] | None = None
+    shap_values: np.ndarray[Any, Any] | None = None
+    shap_interaction_values: np.ndarray[Any, Any] | None = None
 
     latent_variables: list[LatentVariableCandidate] = field(default_factory=list)
     phase_results: dict[str, PhaseResult] = field(default_factory=dict)
@@ -266,10 +266,10 @@ def _drop_non_feature_columns(
 
 def _build_residual_rows(
     model_type: str,
-    fold_assignments: np.ndarray,
-    y_values: np.ndarray,
-    oof_predictions: np.ndarray,
-    oof_residuals: np.ndarray,
+    fold_assignments: np.ndarray[Any, Any],
+    y_values: np.ndarray[Any, Any],
+    oof_predictions: np.ndarray[Any, Any],
+    oof_residuals: np.ndarray[Any, Any],
 ) -> list[dict[str, Any]]:
     """Build a list of residual-row dicts suitable for ``add_residuals_batch``.
 

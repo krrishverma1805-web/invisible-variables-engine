@@ -15,6 +15,7 @@ All endpoints require a valid ``X-API-Key`` header (enforced by middleware).
 from __future__ import annotations
 
 import io
+from typing import Any
 from uuid import UUID
 
 import pandas as pd
@@ -187,7 +188,7 @@ async def upload_dataset(
 )
 async def list_datasets(
     search: str | None = Query(None, description="Case-insensitive name search"),
-    pagination: dict = Depends(get_pagination),
+    pagination: dict[str, Any] = Depends(get_pagination),
     db: AsyncSession = Depends(get_db),
 ) -> DatasetListResponse:
     """Return all datasets with pagination and optional name search."""
@@ -256,7 +257,7 @@ from fastapi import Response, status
 async def delete_dataset(
     dataset_id: UUID,
     db: AsyncSession = Depends(get_db),
-):
+) -> Response:
     """Delete dataset and its artifact file. Returns 204 on success."""
 
     log.info("datasets.delete", dataset_id=str(dataset_id))
@@ -318,7 +319,7 @@ async def get_dataset_profile(
             detail=f"Dataset '{dataset_id}' not found.",
         )
 
-    schema: dict = dataset.schema_json or {}
+    schema: dict[str, Any] = dataset.schema_json or {}
 
     if not schema.get("quality_score"):
         raise HTTPException(

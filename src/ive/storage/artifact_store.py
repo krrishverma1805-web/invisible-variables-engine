@@ -51,7 +51,7 @@ import re
 import uuid
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import BinaryIO
+from typing import Any, BinaryIO, cast
 
 import numpy as np
 
@@ -316,7 +316,7 @@ class ArtifactStore(ABC):
 
     async def save_numpy(
         self,
-        array: np.ndarray,
+        array: np.ndarray[Any, Any],
         category: str,
         filename: str,
         experiment_id: str | None = None,
@@ -336,7 +336,7 @@ class ArtifactStore(ABC):
         np.save(buf, array, allow_pickle=False)
         return await self.save_file(buf.getvalue(), category, filename, experiment_id)
 
-    async def load_numpy(self, path: str) -> np.ndarray:
+    async def load_numpy(self, path: str) -> np.ndarray[Any, Any]:
         """Load a NumPy ``.npy`` artefact.
 
         Args:
@@ -346,7 +346,7 @@ class ArtifactStore(ABC):
             NumPy array.
         """
         raw = await self.load_file(path)
-        return np.load(io.BytesIO(raw), allow_pickle=False)
+        return cast(np.ndarray[Any, Any], np.load(io.BytesIO(raw), allow_pickle=False))
 
     async def save_pickle(
         self,
@@ -470,7 +470,7 @@ class LocalArtifactStore(ArtifactStore):
         experiment_id: str | None = None,
     ) -> str:
         try:
-            import aiofiles
+            import aiofiles  # type: ignore[import-untyped]
         except ImportError as exc:
             raise ImportError(
                 "aiofiles is required.  Add it to pyproject.toml: " "poetry add aiofiles"
@@ -517,7 +517,7 @@ class LocalArtifactStore(ArtifactStore):
             data = await fh.read()
 
         logger.debug("artifact.loaded", path=str(abs_path), size_bytes=len(data))
-        return data
+        return cast(bytes, data)
 
     async def delete_file(self, path: str) -> bool:
         abs_path = Path(path) if Path(path).is_absolute() else self._abs(path)

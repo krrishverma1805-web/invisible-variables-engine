@@ -132,7 +132,7 @@ class IngestionResult:
     @property
     def detected_task(self) -> str:
         """``"classification"`` or ``"regression"`` based on schema_json."""
-        return self.schema_json.get("detected_task", "regression")
+        return str(self.schema_json.get("detected_task", "regression"))
 
 
 # ---------------------------------------------------------------------------
@@ -743,7 +743,7 @@ class DataIngestionService:
         checksum: str,
         row_count: int,
         col_count: int,
-        schema_json: dict,
+        schema_json: dict[str, Any],
     ) -> str:
         """Create a ``Dataset`` row in the database.
 

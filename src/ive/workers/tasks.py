@@ -40,7 +40,7 @@ log = structlog.get_logger("ive.workers.tasks")
 # ---------------------------------------------------------------------------
 
 
-def _get_sync_conn():
+def _get_sync_conn() -> Any:
     """Return a psycopg2 connection using the sync database URL."""
     import psycopg2
 
@@ -167,7 +167,7 @@ def _get_experiment(experiment_id: str) -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------
 
 
-class BaseIVETask(Task):
+class BaseIVETask(Task):  # type: ignore[misc]
     """Celery base task that marks experiments as ``failed`` on unhandled errors."""
 
     abstract = True
@@ -176,8 +176,8 @@ class BaseIVETask(Task):
         self,
         exc: Exception,
         task_id: str,
-        args: tuple,
-        kwargs: dict,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
         einfo: Any,
     ) -> None:
         experiment_id = kwargs.get("experiment_id") or (args[0] if args else None)
@@ -196,8 +196,8 @@ class BaseIVETask(Task):
         self,
         exc: Exception,
         task_id: str,
-        args: tuple,
-        kwargs: dict,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
         einfo: Any,
     ) -> None:
         log.warning(
@@ -236,6 +236,7 @@ async def _run_pipeline_async(experiment_id: str) -> dict[str, Any]:
     async with get_session() as session:
         pipeline = IVEPipeline(session, store)
         return await pipeline.run_experiment(UUID(experiment_id))
+    return {}  # Fallback for MyPy
 
 
 # ---------------------------------------------------------------------------
@@ -243,7 +244,7 @@ async def _run_pipeline_async(experiment_id: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-@celery_app.task(
+@celery_app.task(  # type: ignore[untyped-decorator]
     base=BaseIVETask,
     bind=True,
     name="ive.workers.tasks.run_experiment",
@@ -304,7 +305,7 @@ def run_experiment(
         # asyncio.run() creates a fresh event loop for this sync Celery context.
         result = asyncio.run(_run_pipeline_async(experiment_id))
 
-        elapsed = round(time.perf_counter() - t_start, 2)
+        elapsed = round(float(time.perf_counter() - t_start), 2)
         n_latent = result.get("n_validated", 0)
 
         log.info(
@@ -340,7 +341,7 @@ def run_experiment(
 # ---------------------------------------------------------------------------
 
 
-@celery_app.task(
+@celery_app.task(  # type: ignore[untyped-decorator]
     name="ive.workers.tasks.profile_dataset",
     max_retries=1,
     default_retry_delay=30,
@@ -376,7 +377,7 @@ def profile_dataset(dataset_id: str, file_path: str) -> dict[str, Any]:
             df = pd.read_csv(file_path)
 
         target_col = "target"
-        existing_schema: dict = {}
+        existing_schema: dict[str, Any] = {}
         conn = _get_sync_conn()
         try:
             cur = conn.cursor()
@@ -445,7 +446,7 @@ def profile_dataset(dataset_id: str, file_path: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-@celery_app.task(
+@celery_app.task(  # type: ignore[untyped-decorator]
     name="ive.workers.tasks.cancel_experiment",
     queue="high_priority",
 )
@@ -476,7 +477,7 @@ def cancel_experiment(task_id: str, experiment_id: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-@celery_app.task(
+@celery_app.task(  # type: ignore[untyped-decorator]
     name="ive.workers.tasks.health_check_task",
     queue="default",
 )

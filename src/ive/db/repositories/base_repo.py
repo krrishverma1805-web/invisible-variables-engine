@@ -70,7 +70,7 @@ class BaseRepository(Generic[ModelType]):
         except IntegrityError as exc:
             self._log.error("create.integrity_error", error=str(exc))
             raise
-        self._log.debug("created", id=str(instance.id))
+        self._log.debug("created", id=str(instance.id))  # type: ignore[attr-defined]
         return instance
 
     # ------------------------------------------------------------------
@@ -87,7 +87,7 @@ class BaseRepository(Generic[ModelType]):
             The model instance, or ``None`` if not found.
         """
         result = await self.session.execute(
-            select(self.model_class).where(self.model_class.id == id)
+            select(self.model_class).where(self.model_class.id == id)  # type: ignore[attr-defined]
         )
         return result.scalar_one_or_none()
 
@@ -212,6 +212,6 @@ class BaseRepository(Generic[ModelType]):
         Returns:
             ``True`` if the row exists.
         """
-        stmt = select(func.count()).select_from(self.model_class).where(self.model_class.id == id)
+        stmt = select(func.count()).select_from(self.model_class).where(self.model_class.id == id)  # type: ignore[attr-defined]
         result = await self.session.execute(stmt)
         return result.scalar_one() > 0

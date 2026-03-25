@@ -11,6 +11,7 @@ Experiment-scoped routes live in experiments.py:
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -47,7 +48,7 @@ async def list_latent_variables(
         description="Filter by status: candidate | validated | rejected",
     ),
     experiment_id: UUID | None = Query(None, description="Filter by experiment UUID"),
-    pagination: dict = Depends(get_pagination),
+    pagination: dict[str, Any] = Depends(get_pagination),
     db: AsyncSession = Depends(get_db),
 ) -> LatentVariableListResponse:
     """Return a paginated list of latent variables across all experiments.

@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -54,7 +55,7 @@ _TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
 # ---------------------------------------------------------------------------
 
 
-def _fetch_experiment_sync(experiment_id: str) -> dict | None:
+def _fetch_experiment_sync(experiment_id: str) -> dict[str, Any] | None:
     """Fetch minimal experiment status row using a psycopg2 connection.
 
     Runs in a thread via :func:`asyncio.to_thread` to avoid blocking the
@@ -102,7 +103,7 @@ def _fetch_experiment_sync(experiment_id: str) -> dict | None:
         return None
 
 
-def _fetch_celery_progress(task_id: str) -> dict | None:
+def _fetch_celery_progress(task_id: str) -> dict[str, Any] | None:
     """Check Celery task state for PROGRESS meta.
 
     Only called when the DB status is ``running`` and a ``celery_task_id``
@@ -215,7 +216,10 @@ async def experiment_progress(
 
             # -- Terminal state → final status frame + close
             if current_status in _TERMINAL_STATUSES:
-                payload: dict = {"status": current_status, "progress": current_progress}
+                payload: dict[str, Any] = {
+                    "status": current_status,
+                    "progress": current_progress,
+                }
                 if current_status == "failed":
                     payload["error"] = exp.get("error_message") or "Unknown error"
                 await _send(websocket, "status", payload)
@@ -249,7 +253,7 @@ async def experiment_progress(
 # ---------------------------------------------------------------------------
 
 
-async def _send(websocket: WebSocket, msg_type: str, data: dict) -> None:
+async def _send(websocket: WebSocket, msg_type: str, data: dict[str, Any]) -> None:
     """Send a typed JSON frame to the WebSocket client.
 
     Args:

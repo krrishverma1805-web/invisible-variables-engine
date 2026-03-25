@@ -93,7 +93,7 @@ async def readiness_check(
         settings = get_settings()
         r = aioredis.from_url(settings.redis_url, socket_connect_timeout=2)
         await r.ping()
-        await r.aclose()
+        await r.close()
         checks["redis"] = "healthy"
     except ImportError:
         checks["redis"] = "unavailable: redis-py not installed"

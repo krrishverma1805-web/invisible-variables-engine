@@ -395,7 +395,8 @@ class DataProfiler:
         if len(non_null) == 0:
             return {}
 
-        r4 = lambda x: round(float(x), 4)
+        def r4(x: Any) -> float:
+            return round(float(x), 4)
 
         q25, median, q75 = (
             non_null.quantile(0.25),
@@ -644,7 +645,7 @@ class DataProfiler:
                 )
 
         # Class imbalance
-        if target_stats.is_imbalanced:
+        if target_stats.is_imbalanced and target_stats.class_distribution:
             issues.append(
                 QualityIssue(
                     severity="high",

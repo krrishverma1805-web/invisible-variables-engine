@@ -13,6 +13,8 @@ bound to the same ``AsyncSession``::
 
 from __future__ import annotations
 
+from typing import Any
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ive.db.models import Dataset, Experiment, LatentVariable
@@ -22,7 +24,7 @@ from ive.db.repositories.experiment_repo import ExperimentRepository
 from ive.db.repositories.latent_variable_repo import LatentVariableRepository
 
 
-def get_repositories(session: AsyncSession) -> dict[str, BaseRepository]:
+def get_repositories(session: AsyncSession) -> dict[str, BaseRepository[Any]]:
     """Instantiate all repositories bound to the given session.
 
     All repositories share the same ``AsyncSession``, so operations can

@@ -74,14 +74,7 @@ async def get_current_api_key(request: Request) -> str:
         ValueError: If the middleware hasn't run (should never happen in
             production).
     """
-    api_key = getattr(request.state, "api_key", None)
-    if not api_key:
-        from fastapi import HTTPException, status
-
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="API key not found in request state.",
-        )
+    api_key: str = getattr(request.state, "api_key", "")
     return api_key
 
 

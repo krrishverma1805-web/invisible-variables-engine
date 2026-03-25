@@ -4,6 +4,7 @@ Uses structlog with stdlib logging backend.
 """
 
 import logging
+from typing import Any
 
 import structlog
 
@@ -16,7 +17,7 @@ def setup_logging(log_level: str = "INFO", json_format: bool = False) -> None:
         level=getattr(logging, log_level.upper(), logging.INFO),
     )
 
-    processors = [
+    processors: list[Any] = [
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
@@ -40,17 +41,17 @@ def setup_logging(log_level: str = "INFO", json_format: bool = False) -> None:
     )
 
 
-def get_logger(name: str):
+def get_logger(name: str) -> Any:
     """Return a structured logger."""
     return structlog.get_logger(name)
 
 
-def bind_context(**kwargs):
+def bind_context(**kwargs: Any) -> None:
     """Bind context variables to the current request."""
     structlog.contextvars.bind_contextvars(**kwargs)
 
 
-def clear_context():
+def clear_context() -> None:
     """Clear context variables."""
     structlog.contextvars.clear_contextvars()
 
@@ -65,6 +66,6 @@ def log_request(
         method=method,
         path=path,
         status_code=status_code,
-        duration_ms=round(duration_ms, 2),
+        duration_ms=round(float(duration_ms), 2),
         client_ip=client_ip,
     )
