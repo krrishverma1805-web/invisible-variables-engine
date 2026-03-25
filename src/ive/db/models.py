@@ -24,8 +24,8 @@ Table              Purpose
 from __future__ import annotations
 
 import uuid
-from typing import Any
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import (
     ARRAY,

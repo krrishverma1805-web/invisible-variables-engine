@@ -9,9 +9,9 @@ These insights guide subgroup discovery and latent variable naming in Phase 4.
 """
 
 from __future__ import annotations
-from typing import Any
 
 from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 import structlog
@@ -24,7 +24,9 @@ class SHAPResult:
     """Container for SHAP analysis outputs."""
 
     shap_values: np.ndarray[Any, Any]  # (n_samples, n_features)
-    shap_interaction_values: np.ndarray[Any, Any] | None = None  # (n_samples, n_features, n_features)
+    shap_interaction_values: np.ndarray[Any, Any] | None = (
+        None  # (n_samples, n_features, n_features)
+    )
     mean_abs_shap: dict[str, float] = field(default_factory=dict)
     top_interaction_pairs: list[tuple[str, str, float]] = field(default_factory=list)
     feature_names: list[str] = field(default_factory=list)

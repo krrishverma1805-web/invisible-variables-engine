@@ -7,6 +7,7 @@ sensible defaults.
 """
 
 from __future__ import annotations
+
 from typing import Any
 
 import numpy as np
@@ -132,6 +133,7 @@ def confidence_interval_bootstrap(
 def normalise_scores(scores: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
     """Normalise an array to [0, 1] range (min-max)."""
     from typing import cast
+
     rng = scores.max() - scores.min()
     if rng == 0:
         return np.zeros_like(scores, dtype=float)

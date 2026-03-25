@@ -170,7 +170,7 @@ class HDBSCANClustering:
             metric="euclidean",
         )
         clusterer.fit(scaled)
-        labels: np.ndarray = clusterer.labels_
+        labels: np.ndarray[Any, Any] = clusterer.labels_
 
         unique_labels = set(labels.tolist())
         unique_labels.discard(-1)
@@ -310,8 +310,8 @@ class HDBSCANClusterer:
 
     def fit(
         self,
-        residuals: np.ndarray,
-        feature_matrix: np.ndarray,
+        residuals: np.ndarray[Any, Any],
+        feature_matrix: np.ndarray[Any, Any],
         residual_weight: float = 2.0,
     ) -> ClusteringResult:
         """Fit HDBSCAN on the combined residual-feature space.
@@ -350,8 +350,13 @@ class HDBSCANClusterer:
             cluster_selection_method=self.cluster_selection_method,
             metric=self.metric,
         )
-        self._clusterer.fit(combined)
-        labels: np.ndarray = self._clusterer.labels_
+        if self._clusterer is not None:
+            # We know it's an HDBSCAN instance here
+            cast(Any, self._clusterer).fit(combined)
+            labels: np.ndarray[Any, Any] = cast(Any, self._clusterer).labels_
+        else:
+            # Should not happen as we just assigned it
+            labels = np.array([])
 
         unique, counts = np.unique(labels[labels >= 0], return_counts=True)
         n_clusters = len(unique)
