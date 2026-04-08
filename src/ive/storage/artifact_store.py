@@ -50,8 +50,9 @@ import pickle
 import re
 import uuid
 from abc import ABC, abstractmethod
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, BinaryIO, cast
+from typing import Any, BinaryIO, AsyncIterator, cast
 
 import numpy as np
 
@@ -589,6 +590,36 @@ class S3ArtifactStore(ArtifactStore):
     def _full_key(self, logical: str) -> str:
         return self.prefix + logical.lstrip("/")
 
+    def _extract_key(self, path: str) -> str:
+        """Extract the S3 object key from an ``s3://`` URI or logical path.
+
+        If ``path`` starts with ``s3://{bucket}/``, the bucket prefix is
+        stripped and the raw key is returned.  Otherwise, ``path`` is treated
+        as a logical path and run through :meth:`_full_key`.
+        """
+        s3_prefix = f"s3://{self.bucket}/"
+        if path.startswith(s3_prefix):
+            return path[len(s3_prefix):]
+        return self._full_key(path)
+
+    @asynccontextmanager
+    async def _s3_client(self) -> AsyncIterator[Any]:
+        """Create an aiobotocore S3 client as an async context manager."""
+        import aiobotocore.session  # lazy import
+
+        session = aiobotocore.session.AioSession()
+        kwargs: dict[str, Any] = {
+            "region_name": self.region,
+        }
+        if self.endpoint_url:
+            kwargs["endpoint_url"] = self.endpoint_url
+        if self._access_key:
+            kwargs["aws_access_key_id"] = self._access_key
+        if self._secret_key:
+            kwargs["aws_secret_access_key"] = self._secret_key
+        async with session.create_client("s3", **kwargs) as client:
+            yield client
+
     async def save_file(
         self,
         file_content: bytes | BinaryIO,
@@ -596,58 +627,80 @@ class S3ArtifactStore(ArtifactStore):
         filename: str,
         experiment_id: str | None = None,
     ) -> str:
-        # TODO: implement for production using aiobotocore
-        #
-        # if not isinstance(file_content, bytes):
-        #     file_content = file_content.read()
-        # if len(file_content) > self.max_file_size:
-        #     raise ValueError("File too large")
-        # unique_name = _make_unique_filename(filename)
-        # logical = _resolve_path_parts(category, unique_name, experiment_id)
-        # key = self._full_key(logical)
-        # async with aiobotocore.session.AioSession().create_client(
-        #         "s3", region_name=self.region,
-        #         endpoint_url=self.endpoint_url,
-        #         aws_access_key_id=self._access_key,
-        #         aws_secret_access_key=self._secret_key) as client:
-        #     await client.put_object(Bucket=self.bucket, Key=key, Body=file_content)
-        # return f"s3://{self.bucket}/{key}"
-        raise NotImplementedError("S3ArtifactStore.save_file — implement with aiobotocore")
+        if not isinstance(file_content, bytes):
+            file_content = file_content.read()
+
+        if len(file_content) > self.max_file_size:
+            raise ValueError(
+                f"File size {len(file_content):,} bytes exceeds maximum "
+                f"{self.max_file_size:,} bytes ({self.max_file_size // (1024 * 1024)} MB)"
+            )
+
+        unique_name = _make_unique_filename(filename)
+        logical = _resolve_path_parts(category, unique_name, experiment_id)
+        key = self._full_key(logical)
+
+        async with self._s3_client() as client:
+            await client.put_object(Bucket=self.bucket, Key=key, Body=file_content)
+
+        logger.info("s3.save", key=key, size=len(file_content))
+        return f"s3://{self.bucket}/{key}"
 
     async def load_file(self, path: str) -> bytes:
-        # TODO: implement for production using aiobotocore
-        #
-        # key = path.removeprefix(f"s3://{self.bucket}/")
-        # async with ... as client:
-        #     response = await client.get_object(Bucket=self.bucket, Key=key)
-        #     return await response["Body"].read()
-        raise NotImplementedError("S3ArtifactStore.load_file — implement with aiobotocore")
+        key = self._extract_key(path)
+
+        async with self._s3_client() as client:
+            response = await client.get_object(Bucket=self.bucket, Key=key)
+            data: bytes = await response["Body"].read()
+
+        logger.info("s3.load", key=key, size=len(data))
+        return data
 
     async def delete_file(self, path: str) -> bool:
-        # TODO: implement for production using aiobotocore
-        #
-        # key = path.removeprefix(f"s3://{self.bucket}/")
-        # async with ... as client:
-        #     await client.delete_object(Bucket=self.bucket, Key=key)
-        # return True
-        raise NotImplementedError("S3ArtifactStore.delete_file — implement with aiobotocore")
+        key = self._extract_key(path)
+
+        async with self._s3_client() as client:
+            await client.delete_object(Bucket=self.bucket, Key=key)
+
+        logger.info("s3.delete", key=key)
+        return True
 
     async def file_exists(self, path: str) -> bool:
-        # TODO: implement for production — use head_object and catch ClientError 404
-        raise NotImplementedError("S3ArtifactStore.file_exists — implement with aiobotocore")
+        key = self._extract_key(path)
+
+        async with self._s3_client() as client:
+            try:
+                await client.head_object(Bucket=self.bucket, Key=key)
+                return True
+            except client.exceptions.NoSuchKey:
+                return False
+            except Exception:
+                # botocore ClientError with 404 status code
+                return False
 
     async def get_file_size(self, path: str) -> int:
-        # TODO: implement for production — head_object returns ContentLength
-        raise NotImplementedError("S3ArtifactStore.get_file_size — implement with aiobotocore")
+        key = self._extract_key(path)
+
+        async with self._s3_client() as client:
+            response = await client.head_object(Bucket=self.bucket, Key=key)
+            return int(response["ContentLength"])
 
     async def list_files(self, prefix: str = "") -> list[str]:
-        # TODO: implement for production — use list_objects_v2 paginator
-        #
-        # paginator = client.get_paginator("list_objects_v2")
-        # async for page in paginator.paginate(Bucket=self.bucket, Prefix=full_prefix):
-        #     for obj in page.get("Contents", []):
-        #         keys.append(obj["Key"].removeprefix(self.prefix))
-        raise NotImplementedError("S3ArtifactStore.list_files — implement with aiobotocore")
+        full_prefix = self._full_key(prefix) if prefix else self.prefix
+        keys: list[str] = []
+
+        async with self._s3_client() as client:
+            paginator = client.get_paginator("list_objects_v2")
+            async for page in paginator.paginate(
+                Bucket=self.bucket, Prefix=full_prefix
+            ):
+                for obj in page.get("Contents", []):
+                    logical = obj["Key"]
+                    if self.prefix and logical.startswith(self.prefix):
+                        logical = logical[len(self.prefix):]
+                    keys.append(logical)
+
+        return keys
 
 
 # ---------------------------------------------------------------------------

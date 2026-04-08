@@ -26,9 +26,10 @@ Connection lifecycle
 6. Connection auto-closes after 30 min (timeout safety).
 7. Client disconnect is caught gracefully — no error raised.
 
-NOTE: This implementation polls the database. A future improvement is to
-subscribe to a Redis pub/sub channel so workers can push progress without
-the DB round-trip.
+This implementation uses Redis pub/sub as the primary progress channel,
+falling back to DB polling if Redis is unavailable.  The database is
+always checked as the source of truth for terminal states and final
+progress values.
 """
 
 from __future__ import annotations
@@ -48,6 +49,88 @@ _POLL_INTERVAL = 2.0  # seconds between DB polls
 _KEEPALIVE_INTERVAL = 30.0  # seconds between ping frames
 _MAX_DURATION = 30 * 60.0  # 30 minutes max connection time
 _TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
+
+
+# ---------------------------------------------------------------------------
+# Redis pub/sub helpers
+# ---------------------------------------------------------------------------
+
+
+async def _subscribe_redis(
+    experiment_id: str,
+) -> tuple[Any, Any]:
+    """Subscribe to a Redis pub/sub channel for experiment progress.
+
+    Returns ``(pubsub, client)`` on success, or ``(None, None)`` if Redis
+    is unavailable so the caller can fall back to DB polling.
+    """
+    try:
+        import redis.asyncio as aioredis
+
+        from ive.config import get_settings
+
+        settings = get_settings()
+        redis_url = str(settings.redis_url)
+
+        client = aioredis.from_url(redis_url, decode_responses=True)
+        pubsub = client.pubsub()
+        channel = f"experiment:{experiment_id}:progress"
+        await pubsub.subscribe(channel)
+
+        log.info("ws.redis_subscribed", channel=channel)
+        return pubsub, client
+    except Exception as exc:
+        log.warning("ws.redis_unavailable", error=str(exc))
+        return None, None
+
+
+async def publish_progress(
+    experiment_id: str,
+    progress: int,
+    stage: str,
+    status: str = "running",
+) -> bool:
+    """Publish experiment progress to a Redis pub/sub channel.
+
+    Designed to be called from the pipeline / worker layer so that
+    WebSocket consumers receive low-latency updates without waiting
+    for a DB poll cycle.
+
+    Args:
+        experiment_id: UUID string of the experiment.
+        progress:      Integer percentage (0-100).
+        stage:         Current pipeline stage name.
+        status:        Experiment status string (default ``"running"``).
+
+    Returns:
+        ``True`` if the message was published successfully, ``False``
+        otherwise (e.g. Redis unavailable).
+    """
+    try:
+        import json
+
+        import redis.asyncio as aioredis
+
+        from ive.config import get_settings
+
+        settings = get_settings()
+        redis_url = str(settings.redis_url)
+
+        client = aioredis.from_url(redis_url, decode_responses=True)
+        channel = f"experiment:{experiment_id}:progress"
+        message = json.dumps(
+            {
+                "progress": progress,
+                "stage": stage,
+                "status": status,
+            }
+        )
+        await client.publish(channel, message)
+        await client.aclose()
+        return True
+    except Exception as exc:
+        log.debug("ws.publish_failed", error=str(exc))
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +245,10 @@ async def experiment_progress(
     start_time = asyncio.get_event_loop().time()
     last_keepalive = start_time
 
+    # -- Set up Redis pub/sub (falls back to DB-only if unavailable)
+    pubsub, redis_client = await _subscribe_redis(experiment_id)
+    use_redis = pubsub is not None
+
     try:
         while True:
             now = asyncio.get_event_loop().time()
@@ -180,7 +267,26 @@ async def experiment_progress(
                 await _send(websocket, "ping", {"timestamp": datetime.now(UTC).isoformat()})
                 last_keepalive = now
 
-            # -- Fetch latest DB state
+            # -- Try to receive a Redis pub/sub message
+            progress_data: dict[str, Any] | None = None
+
+            if use_redis:
+                try:
+                    import json as _json
+
+                    message = await asyncio.wait_for(
+                        pubsub.get_message(ignore_subscribe_messages=True),  # type: ignore[union-attr]
+                        timeout=_POLL_INTERVAL,
+                    )
+                    if message and message.get("type") == "message":
+                        progress_data = _json.loads(message["data"])
+                except asyncio.TimeoutError:
+                    pass  # No message within interval — fall through to DB
+                except Exception:
+                    use_redis = False
+                    log.warning("ws.redis_fallback", experiment_id=experiment_id)
+
+            # -- Always verify against DB (source of truth)
             exp = await asyncio.to_thread(_fetch_experiment_sync, experiment_id)
             if exp is None:
                 await _send(websocket, "error", {"message": "Experiment record disappeared."})
@@ -190,12 +296,23 @@ async def experiment_progress(
             current_progress = exp["progress_pct"] or 0
             current_stage = exp["current_stage"] or ""
 
+            # -- Merge Redis data (prefer higher progress)
+            if progress_data:
+                redis_progress = progress_data.get("progress", 0)
+                if isinstance(redis_progress, int) and redis_progress > current_progress:
+                    current_progress = redis_progress
+                    current_stage = progress_data.get("stage", current_stage)
+                redis_status = progress_data.get("status", "")
+                if redis_status in _TERMINAL_STATUSES:
+                    current_status = redis_status
+
             # -- Supplement with Celery PROGRESS meta if running
             if current_status == "running" and exp.get("celery_task_id"):
-                celery_meta = await asyncio.to_thread(_fetch_celery_progress, exp["celery_task_id"])
+                celery_meta = await asyncio.to_thread(
+                    _fetch_celery_progress, exp["celery_task_id"]
+                )
                 if celery_meta:
                     celery_progress = celery_meta["progress"]
-                    # Take the higher of DB and Celery progress (avoids going backwards)
                     if celery_progress > current_progress:
                         current_progress = celery_progress
                         current_stage = celery_meta.get("stage", current_stage)
@@ -214,7 +331,7 @@ async def experiment_progress(
                 last_progress = current_progress
                 last_status = current_status
 
-            # -- Terminal state → final status frame + close
+            # -- Terminal state -> final status frame + close
             if current_status in _TERMINAL_STATUSES:
                 payload: dict[str, Any] = {
                     "status": current_status,
@@ -230,7 +347,9 @@ async def experiment_progress(
                 )
                 break
 
-            await asyncio.sleep(_POLL_INTERVAL)
+            # Only sleep when not using Redis (Redis wait_for provides the delay)
+            if not use_redis:
+                await asyncio.sleep(_POLL_INTERVAL)
 
     except WebSocketDisconnect:
         log.info("ws.disconnected", experiment_id=experiment_id)
@@ -241,6 +360,13 @@ async def experiment_progress(
         except Exception:
             pass
     finally:
+        # -- Cleanup Redis subscription
+        if pubsub:
+            try:
+                await pubsub.unsubscribe()
+                await redis_client.aclose()  # type: ignore[union-attr]
+            except Exception:
+                pass
         try:
             await websocket.close()
         except Exception:
