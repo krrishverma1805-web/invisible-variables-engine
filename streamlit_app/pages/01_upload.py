@@ -3,17 +3,19 @@ import os
 import pandas as pd
 import requests
 import streamlit as st
+from components.theme import apply_carbon_theme
 
 st.set_page_config(
     page_title="Upload Dataset - IVE",
-    page_icon="📂",
+    page_icon=":material/folder:",
     layout="wide",
 )
+apply_carbon_theme()
 
 API_BASE = os.getenv("API_BASE_URL", "http://api:8000")
 HEADERS = {"X-API-Key": "dev-key-1"}
 
-st.title("📂 Upload Dataset")
+st.title("Upload Dataset")
 st.markdown("Upload a CSV file to begin analysis.")
 
 # --- Upload Form ---

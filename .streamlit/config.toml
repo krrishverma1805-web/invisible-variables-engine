@@ -1,0 +1,92 @@
+# IBM Carbon Design System — Streamlit Theme Configuration
+# Supports automatic light/dark mode switching via Streamlit's theme picker
+
+[theme]
+# ── Shared tokens ────────────────────────────────────────────────────
+primaryColor = "#0f62fe"                # IBM Blue 60
+font = "IBM Plex Sans:https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;600&display=swap"
+headingFont = "IBM Plex Sans:https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;600&display=swap"
+codeFont = "IBM Plex Mono:https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400&display=swap"
+baseFontSize = 16
+baseFontWeight = 400
+baseRadius = 0                          # Carbon: 0px border-radius everywhere
+buttonRadius = 0                        # Carbon: rectangular buttons
+headingFontWeights = [300, 400]         # h1=300 (Light), h2+=400 (Regular)
+codeFontSize = "0.875rem"               # 14px
+codeFontWeight = 400
+showWidgetBorder = false                # Carbon: bottom-border only, not boxed
+
+# Status colors (Carbon palette)
+redColor = "#da1e28"                    # Red 60 — error/danger
+greenColor = "#24a148"                  # Green 50 — success
+yellowColor = "#f1c21b"                 # Yellow 30 — warning
+blueColor = "#0f62fe"                   # Blue 60 — info
+
+# ── Light Theme (White Theme) ─────────────────────────────────────────
+[theme.light]
+primaryColor = "#0f62fe"                # IBM Blue 60
+backgroundColor = "#ffffff"             # White — page background
+secondaryBackgroundColor = "#f4f4f4"    # Gray 10 — cards, surfaces
+textColor = "#161616"                   # Gray 100 — primary text
+borderColor = "#e0e0e0"                 # Gray 20 — subtle borders
+codeBackgroundColor = "#f4f4f4"         # Gray 10
+codeTextColor = "#161616"               # Gray 100
+linkColor = "#0f62fe"                   # Blue 60
+
+# Status colors — light mode
+redColor = "#da1e28"
+redBackgroundColor = "#fff1f1"          # Red 10
+redTextColor = "#da1e28"               # Red 60
+greenColor = "#24a148"
+greenBackgroundColor = "#defbe6"        # Green 10
+greenTextColor = "#24a148"             # Green 50
+yellowColor = "#f1c21b"
+yellowBackgroundColor = "#fdf6dd"       # Yellow 10
+yellowTextColor = "#161616"            # Gray 100 (dark text on yellow bg)
+blueColor = "#0f62fe"
+blueBackgroundColor = "#edf5ff"         # Blue 10
+blueTextColor = "#0f62fe"              # Blue 60
+
+[theme.light.sidebar]
+primaryColor = "#0f62fe"
+backgroundColor = "#161616"             # Gray 100 — dark masthead
+secondaryBackgroundColor = "#262626"    # Gray 90
+textColor = "#f4f4f4"                   # Gray 10 — light text on dark
+borderColor = "#393939"                 # Gray 80
+linkColor = "#78a9ff"                   # Blue 40 — lighter for dark bg
+
+# ── Dark Theme (Gray 100 Theme) ──────────────────────────────────────
+[theme.dark]
+primaryColor = "#78a9ff"                # Blue 40 — lighter interactive for dark bg
+backgroundColor = "#161616"             # Gray 100 — page background
+secondaryBackgroundColor = "#262626"    # Gray 90 — Layer 01 cards
+textColor = "#f4f4f4"                   # Gray 10 — primary text
+borderColor = "#393939"                 # Gray 80 — border subtle
+codeBackgroundColor = "#262626"         # Gray 90
+codeTextColor = "#f4f4f4"              # Gray 10
+linkColor = "#78a9ff"                   # Blue 40
+
+# Status colors — dark mode (lighter tints for contrast)
+redColor = "#ff8389"
+redBackgroundColor = "#2d0709"
+redTextColor = "#ff8389"
+greenColor = "#42be65"
+greenBackgroundColor = "#071908"
+greenTextColor = "#42be65"
+yellowColor = "#f1c21b"
+yellowBackgroundColor = "#281e00"
+yellowTextColor = "#f1c21b"
+blueColor = "#78a9ff"
+blueBackgroundColor = "#001d6c"
+blueTextColor = "#78a9ff"
+
+[theme.dark.sidebar]
+primaryColor = "#78a9ff"
+backgroundColor = "#262626"             # Gray 90 — slightly lighter than page
+secondaryBackgroundColor = "#393939"    # Gray 80
+textColor = "#f4f4f4"                   # Gray 10
+borderColor = "#393939"                 # Gray 80
+linkColor = "#78a9ff"                   # Blue 40
+
+[server]
+headless = true

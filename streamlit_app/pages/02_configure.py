@@ -2,17 +2,19 @@ import os
 
 import requests
 import streamlit as st
+from components.theme import apply_carbon_theme
 
 st.set_page_config(
     page_title="Configure Experiment - IVE",
-    page_icon="⚙️",
+    page_icon=":material/settings:",
     layout="wide",
 )
+apply_carbon_theme()
 
 API_BASE = os.getenv("API_BASE_URL", "http://api:8000")
 HEADERS = {"X-API-Key": "dev-key-1"}
 
-st.title("⚙️ Configure Experiment")
+st.title("Configure Experiment")
 st.markdown("Set up a new Invisible Variables Engine analysis run.")
 
 # --- Fetch Datasets ---
@@ -29,7 +31,7 @@ except requests.RequestException:
 
 if not datasets_dict:
     st.warning("No datasets available. Please upload a dataset first.")
-    st.page_link("pages/01_upload.py", label="Go to Upload Dataset", icon="📂")
+    st.page_link("pages/01_upload.py", label="Go to Upload Dataset", icon=":material/folder:")
     st.stop()
 
 # --- Configuration Form ---
@@ -60,13 +62,13 @@ with st.form("config_form"):
     # Inline helper text beneath the selectbox
     if analysis_mode_value == "demo":
         st.caption(
-            "🔬 **Demo mode** applies relaxed detection thresholds "
+            "**Demo mode** applies relaxed detection thresholds "
             "(effect size ≥ 0.15, bootstrap stability ≥ 0.60) "
             "to maximise discoverability on synthetic and exploratory datasets."
         )
     else:
         st.caption(
-            "🏭 **Production mode** applies stricter thresholds "
+            "**Production mode** applies stricter thresholds "
             "(effect size ≥ 0.20, bootstrap stability ≥ 0.70) "
             "to reduce false positives and ensure only high-confidence variables are surfaced."
         )
@@ -112,7 +114,7 @@ with st.form("config_form"):
             help="Iterations for latent variable stability validation.",
         )
 
-    submitted = st.form_submit_button("🚀 Run Experiment", type="primary", use_container_width=True)
+    submitted = st.form_submit_button("Run Experiment", type="primary", use_container_width=True)
 
 if submitted:
     model_types: list[str] = []
@@ -145,7 +147,7 @@ if submitted:
                 if resp.ok:
                     res_data = resp.json()
                     exp_id = res_data.get("id")
-                    mode_badge = "🔬 Demo" if analysis_mode_value == "demo" else "🏭 Production"
+                    mode_badge = "Demo" if analysis_mode_value == "demo" else "Production"
                     st.success(
                         f"Experiment queued successfully!\n\n"
                         f"**ID:** `{exp_id}`  |  **Mode:** {mode_badge}"
@@ -153,7 +155,11 @@ if submitted:
                     st.session_state["active_experiment_id"] = exp_id
                     st.session_state["active_analysis_mode"] = analysis_mode_value
                     st.info("Head over to the Monitor page to track progress.")
-                    st.page_link("pages/03_monitor.py", label="Monitor Progress →", icon="⏳")
+                    st.page_link(
+                        "pages/03_monitor.py",
+                        label="Monitor Progress →",
+                        icon=":material/hourglass_empty:",
+                    )
                 else:
                     st.error(f"Failed to queue experiment: {resp.text}")
             except requests.RequestException as e:

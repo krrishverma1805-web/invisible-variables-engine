@@ -2,6 +2,7 @@ import os
 
 import requests
 import streamlit as st
+from components.theme import carbon_status_dot, carbon_tag
 
 
 def render_release_metadata():
@@ -12,16 +13,8 @@ def render_release_metadata():
     # Release Metadata
     st.caption("**Invisible Variables Engine (IVE)**")
     st.caption("Production-style latent variable discovery platform")
-
-    st.markdown(
-        """
-        <div style="font-size: 0.8rem; color: #888; margin-top: 0.5rem;">
-            <div><b>Version:</b> 0.1.0</div>
-            <div><b>Environment:</b> Development / Demo</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    st.caption("**Version:** 0.1.0")
+    st.caption("**Environment:** Development / Demo")
 
     st.divider()
 
@@ -55,24 +48,22 @@ def render_release_metadata():
     except requests.RequestException:
         pass
 
-    # Status Indicators
-    def status_icon(is_ok: bool) -> str:
-        return "✅" if is_ok else "❌"
+    # Status Indicators (Carbon status dots + tags)
+    def _status_row(label: str, is_ok: bool) -> str:
+        dot = carbon_status_dot("ok" if is_ok else "error")
+        tag = carbon_tag("OK", "green") if is_ok else carbon_tag("Error", "red")
+        return f'<div class="carbon-status-row">{dot} {label}: {tag}</div>'
 
     st.markdown(
-        f"""
-        <div style="font-size: 0.85rem; line-height: 1.6;">
-            <div>API Reachable: {status_icon(api_reachable)}</div>
-            <div>Database Sync: {status_icon(db_ready)}</div>
-            <div>Worker Queue (Redis): {status_icon(redis_ready)}</div>
-        </div>
-        """,
+        _status_row("API Reachable", api_reachable)
+        + _status_row("Database Sync", db_ready)
+        + _status_row("Worker Queue (Redis)", redis_ready),
         unsafe_allow_html=True,
     )
 
     if api_reachable and db_ready and redis_ready:
-        st.success("All systems operational", icon="✅")
+        st.success("All systems operational", icon=":material/check_circle:")
     elif api_reachable:
-        st.warning("System degraded (backend issues)", icon="⚠️")
+        st.warning("System degraded (backend issues)", icon=":material/warning:")
     else:
-        st.error("System offline", icon="🔴")
+        st.error("System offline", icon=":material/error:")

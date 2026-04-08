@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 import streamlit as st
+from components.theme import CARBON_CHART_LAYOUT
 
 
 def shap_bar_chart(feature_importance: dict[str, float], title: str = "Feature Importance") -> None:

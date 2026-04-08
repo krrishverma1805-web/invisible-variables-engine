@@ -12,12 +12,14 @@ import time
 
 import requests
 import streamlit as st
+from components.theme import apply_carbon_theme
 
 st.set_page_config(
     page_title="Monitor Progress - IVE",
-    page_icon="⏳",
+    page_icon=":material/hourglass_empty:",
     layout="wide",
 )
+apply_carbon_theme()
 
 API_BASE = os.getenv("API_BASE_URL", "http://api:8000")
 HEADERS = {"X-API-Key": "dev-key-1"}
@@ -26,26 +28,26 @@ HEADERS = {"X-API-Key": "dev-key-1"}
 # Phase badge colours (CSS-class-free — use inline markdown emoji)
 # ---------------------------------------------------------------------------
 _PHASE_ICONS: dict[str, str] = {
-    "understand": "🔍",
-    "model": "🤖",
-    "detect": "🔎",
-    "construct": "🏗️",
+    "understand": ":material/search:",
+    "model": ":material/smart_toy:",
+    "detect": ":material/manage_search:",
+    "construct": ":material/construction:",
 }
 
 _EVENT_ICONS: dict[str, str] = {
-    "experiment_started": "🚀",
-    "dataset_loaded": "📂",
-    "modeling_started": "⚙️",
-    "modeling_completed": "✅",
-    "detection_started": "🔎",
-    "detection_completed": "✅",
-    "construction_started": "🏗️",
-    "construction_completed": "✅",
-    "experiment_completed": "🎉",
-    "experiment_failed": "❌",
+    "experiment_started": ":material/rocket:",
+    "dataset_loaded": ":material/folder:",
+    "modeling_started": ":material/settings:",
+    "modeling_completed": ":material/check_circle:",
+    "detection_started": ":material/search:",
+    "detection_completed": ":material/check_circle:",
+    "construction_started": ":material/construction:",
+    "construction_completed": ":material/check_circle:",
+    "experiment_completed": ":material/celebration:",
+    "experiment_failed": ":material/error:",
 }
 
-st.title("⏳ Monitor Progress")
+st.title("Monitor Progress")
 st.markdown("Track the execution status of your IVE experiments in real time.")
 
 # ---------------------------------------------------------------------------
@@ -68,7 +70,9 @@ except requests.RequestException:
 
 if not experiments_dict:
     st.info("No experiments found. Run an experiment first.")
-    st.page_link("pages/02_configure.py", label="Configure Experiment →", icon="⚙️")
+    st.page_link(
+        "pages/02_configure.py", label="Configure Experiment →", icon=":material/settings:"
+    )
     st.stop()
 
 # Pre-select the active experiment from session state
@@ -110,13 +114,13 @@ try:
 
         # ── Status badge ──────────────────────────────────────────────────
         if status == "completed":
-            st.success("✅ **Status: COMPLETED**")
+            st.success("**Status: COMPLETED**", icon=":material/check_circle:")
         elif status == "failed":
-            st.error("❌ **Status: FAILED**")
+            st.error("**Status: FAILED**", icon=":material/error:")
         elif status == "cancelled":
-            st.warning("🛑 **Status: CANCELLED**")
+            st.warning("**Status: CANCELLED**", icon=":material/cancel:")
         elif status == "running":
-            st.info("🚀 **Status: RUNNING**")
+            st.info("**Status: RUNNING**", icon=":material/play_circle:")
         else:
             st.markdown(f"**Status:** {status.upper()}")
 
@@ -138,7 +142,7 @@ try:
 
         config_json: dict = full_data.get("config_json", {})
         analysis_mode: str = str(config_json.get("analysis_mode", "demo")).lower()
-        mode_label = "🔬 Demo" if analysis_mode == "demo" else "🏭 Production"
+        mode_label = "Demo" if analysis_mode == "demo" else "Production"
         mode_desc = (
             "Permissive thresholds — optimised for exploration and demonstrations."
             if analysis_mode == "demo"
@@ -155,7 +159,7 @@ try:
             bs = config_json.get("bootstrap_iterations", "—")
             st.metric("Bootstrap Iterations", bs)
 
-        st.caption(f"ℹ️ {mode_desc}")
+        st.caption(f"{mode_desc}")
         st.divider()
 
         # ── Error detail ──────────────────────────────────────────────────
@@ -167,10 +171,12 @@ try:
             st.success(
                 "Analysis complete. View the discovered patterns and validated latent variables."
             )
-            st.page_link("pages/04_results.py", label="View Results Dashboard →", icon="📊")
+            st.page_link(
+                "pages/04_results.py", label="View Results Dashboard →", icon=":material/bar_chart:"
+            )
 
         # ── Execution Log ─────────────────────────────────────────────────
-        st.subheader("🗂️ Execution Log")
+        st.subheader("Execution Log")
 
         events_resp = requests.get(
             f"{API_BASE}/api/v1/experiments/{experiment_id}/events",
@@ -209,9 +215,9 @@ try:
                         except Exception:
                             ts_label = created_at[:19] if created_at else "—"
 
-                        icon = _EVENT_ICONS.get(ev_type, "📋")
+                        icon = _EVENT_ICONS.get(ev_type, "")
                         phase_icon = _PHASE_ICONS.get(phase or "", "")
-                        phase_tag = f" `{phase_icon} {phase}`" if phase else ""
+                        phase_tag = f" **[{phase}]**" if phase else ""
 
                         # Highlight the last event red on failure
                         is_last_failure = (

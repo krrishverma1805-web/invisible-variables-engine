@@ -4,17 +4,19 @@ import os
 import pandas as pd
 import requests
 import streamlit as st
+from components.theme import apply_carbon_theme
 
 st.set_page_config(
     page_title="Results Dashboard - IVE",
-    page_icon="📊",
+    page_icon=":material/bar_chart:",
     layout="wide",
 )
+apply_carbon_theme()
 
 API_BASE = os.getenv("API_BASE_URL", "http://api:8000")
 HEADERS = {"X-API-Key": "dev-key-1"}
 
-st.title("📊 Results Dashboard")
+st.title("Results Dashboard")
 st.markdown(
     "Review discovered error patterns, validated latent variables, and experiment insights."
 )
@@ -38,7 +40,7 @@ except requests.RequestException:
 
 if not experiments_dict:
     st.info("No completed experiments found. Please run an experiment first.")
-    st.page_link("pages/02_configure.py", label="Run Experiment →", icon="⚙️")
+    st.page_link("pages/02_configure.py", label="Run Experiment →", icon=":material/settings:")
     st.stop()
 
 # Pre-select based on session state if available
@@ -64,7 +66,7 @@ st.divider()
 # --- Derive analysis mode from the stored config ---
 _cfg: dict = selected_exp_meta.get("config_json", {})
 analysis_mode: str = str(_cfg.get("analysis_mode", "demo")).lower()
-mode_label = "🔬 Demo" if analysis_mode == "demo" else "🏭 Production"
+mode_label = "Demo" if analysis_mode == "demo" else "Production"
 threshold_profile = (
     "Permissive (Demo) — effect size ≥ 0.15, bootstrap stability ≥ 0.60"
     if analysis_mode == "demo"
@@ -151,7 +153,7 @@ with mode_col2:
 # Demo-mode zero-result advisory
 if analysis_mode == "demo" and total_validated == 0 and total_patterns == 0:
     st.info(
-        "ℹ️ **Demo mode** completed successfully, but no stable latent variables passed "
+        "**Demo mode** completed successfully, but no stable latent variables passed "
         "validation on this dataset. This typically indicates the dataset does not contain "
         "a strong enough hidden signal to satisfy the current thresholds. "
         "Try a dataset with a more pronounced latent structure, or switch to **Production** "
@@ -169,7 +171,7 @@ btn_col1, btn_col2, btn_col3 = st.columns(3)
 with btn_col1:
     if summary_data:
         st.download_button(
-            label="📄 Download Summary JSON",
+            label="Download Summary JSON",
             data=json.dumps(summary_data, indent=2),
             file_name=f"summary_{experiment_id}.json",
             mime="application/json",
@@ -179,7 +181,7 @@ with btn_col1:
 with btn_col2:
     if patterns_csv:
         st.download_button(
-            label="📊 Download Patterns CSV",
+            label="Download Patterns CSV",
             data=patterns_csv,
             file_name=f"patterns_{experiment_id}.csv",
             mime="text/csv",
@@ -189,7 +191,7 @@ with btn_col2:
 with btn_col3:
     if lv_csv:
         st.download_button(
-            label="📈 Download Latent Variables CSV",
+            label="Download Latent Variables CSV",
             data=lv_csv,
             file_name=f"latent_variables_{experiment_id}.csv",
             mime="text/csv",
@@ -273,7 +275,7 @@ validated_lvs = [v for v in lv_data if v.get("status") == "validated"]
 if validated_lvs:
     for lv in validated_lvs:
         with st.expander(
-            f"✨ {lv.get('name')} (Stability: {lv.get('stability_score', 0):.2f})",
+            f"{lv.get('name')} (Stability: {lv.get('stability_score', 0):.2f})",
             expanded=True,
         ):
             col_info, col_metrics = st.columns([2, 1])
@@ -296,13 +298,13 @@ else:
     # Context-aware empty state
     if analysis_mode == "demo" and total_patterns > 0:
         st.info(
-            "ℹ️ **Demo mode** — Patterns were detected but none passed stability validation. "
+            "**Demo mode** — Patterns were detected but none passed stability validation. "
             "This dataset may require a stronger hidden signal or more rows to reach "
             "the stability threshold."
         )
     elif analysis_mode == "production" and total_patterns > 0:
         st.warning(
-            "⚠️ **Production mode** — Patterns were detected but none met the stricter "
+            "**Production mode** — Patterns were detected but none met the stricter "
             "stability requirements. Consider switching to **Demo** mode for exploratory analysis, "
             "or review the dataset for a clearer hidden-variable structure."
         )
