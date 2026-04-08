@@ -56,6 +56,7 @@ from typing import Any, Literal
 import numpy as np
 import pandas as pd
 import structlog
+from joblib import Parallel, delayed
 
 from ive.construction.variable_synthesizer import apply_construction_rule
 
@@ -230,18 +231,40 @@ class BootstrapValidator:
 
         rng = np.random.default_rng(self.seed)
 
-        for cand_idx, candidate in enumerate(candidates):
+        # Give each candidate a deterministic seed derived from the main seed
+        candidate_seeds = [int(rng.integers(0, 2**31)) for _ in candidates]
+
+        def _validate_candidate_wrapper(cand_idx: int, candidate: dict[str, Any], seed: int) -> None:
+            """Wrapper for parallel execution with per-candidate RNG."""
+            cand_rng = np.random.default_rng(seed)
             self._validate_single_candidate(
                 candidate=candidate,
                 cand_idx=cand_idx,
                 original_X=original_X,
                 n_iterations=n_iterations,
-                rng=rng,
+                rng=cand_rng,
                 eff_threshold=eff_threshold,
                 eff_variance=eff_variance,
                 eff_range=eff_range,
                 eff_min_support=eff_min_support,
                 eff_max_support=eff_max_support,
+            )
+
+        n_candidates = len(candidates)
+        log.info(
+            "ive.bootstrap.parallel",
+            n_candidates=n_candidates,
+            parallel=n_candidates > 2,
+        )
+
+        if n_candidates <= 2:
+            # Not worth parallelizing for 1-2 candidates
+            for cand_idx, candidate in enumerate(candidates):
+                _validate_candidate_wrapper(cand_idx, candidate, candidate_seeds[cand_idx])
+        else:
+            Parallel(n_jobs=-1, prefer="threads")(
+                delayed(_validate_candidate_wrapper)(i, c, candidate_seeds[i])
+                for i, c in enumerate(candidates)
             )
 
         n_validated = sum(1 for c in candidates if c.get("status") == "validated")

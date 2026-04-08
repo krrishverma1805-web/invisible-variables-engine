@@ -374,6 +374,9 @@ class IVEPipeline:
         validated: list[dict[str, Any]] = []
 
         try:
+            # Bind experiment_id to logger context for all subsequent log lines
+            self.logger = self.logger.bind(experiment_id=str(experiment_id))
+
             # ── Fetch experiment ───────────────────────────────────────
             experiment = await exp_repo.get_by_id(experiment_id)
             if experiment is None:
@@ -461,9 +464,10 @@ class IVEPipeline:
 
                 self.logger.info(
                     "pipeline.holdout_split",
-                    n_train=len(X_train),
-                    n_holdout=len(X_holdout),
                     holdout_ratio=holdout_ratio,
+                    train_size=len(X_train),
+                    holdout_size=len(X_holdout),
+                    temporal_split=bool(time_column_name and time_column_name in df.columns),
                 )
 
             self.logger.info(
@@ -562,6 +566,17 @@ class IVEPipeline:
                     mean_r2=round(cv_result.mean_score, 4),
                     residual_std=round(float(np.std(oof_resid)), 4),
                 )
+                self.logger.info(
+                    "pipeline.model_residual_summary",
+                    model_type=model_type,
+                    mean_score=round(cv_result.mean_score, 4),
+                    std_score=round(cv_result.std_score, 4),
+                    residual_std=round(float(np.std(oof_resid)), 4),
+                    n_unstable_features=sum(
+                        1 for v in getattr(cv_result, "importance_stability", {}).values()
+                        if v > 0.5
+                    ),
+                )
                 _record_event(
                     experiment_id,
                     event_type="modeling_completed",
@@ -620,6 +635,18 @@ class IVEPipeline:
             hdb = HDBSCANClustering()
             cl_patterns = hdb.detect(X_train, abs_residuals)
             all_patterns.extend(cl_patterns)
+
+            # Log top patterns for operational tracing
+            for i, p in enumerate(all_patterns[:10]):  # log top 10 only
+                self.logger.debug(
+                    "pipeline.pattern_retained",
+                    pattern_idx=i,
+                    pattern_type=p.get("pattern_type"),
+                    column=p.get("column_name", "N/A"),
+                    effect_size=round(float(p.get("effect_size", 0)), 4),
+                    p_value=round(float(p.get("p_value", 0)), 6),
+                    sample_count=p.get("sample_count", 0),
+                )
 
             # Bulk-insert patterns (more efficient than individual inserts)
             if all_patterns:
@@ -682,6 +709,18 @@ class IVEPipeline:
                     X_train, candidates, n_iterations=int(config.get("bootstrap_iterations", 50))
                 )
 
+                # Log per-candidate outcomes for traceability
+                for var in validated:
+                    self.logger.info(
+                        "pipeline.candidate_outcome",
+                        name=var.get("name", "unknown"),
+                        status=var.get("status"),
+                        presence_rate=round(float(var.get("bootstrap_presence_rate", 0)), 4),
+                        holdout_validated=var.get("holdout_validated"),
+                        rejection_reason=var.get("rejection_reason"),
+                        causal_warnings=var.get("causal_warnings", []),
+                    )
+
                 # ── Holdout validation ─────────────────────────────────
                 if len(X_holdout) > 0 and validated:
                     synth_holdout = VariableSynthesizer()
@@ -736,6 +775,18 @@ class IVEPipeline:
                         n_holdout_passed=n_holdout_passed,
                         n_validated=n_validated,
                         holdout_size=len(X_holdout),
+                    )
+                    self.logger.info(
+                        "pipeline.holdout_summary",
+                        n_validated=n_validated,
+                        n_holdout_passed=n_holdout_passed,
+                        n_holdout_failed=sum(
+                            1 for v in validated if v.get("holdout_validated") is False
+                        ),
+                        n_causal_penalized=sum(
+                            1 for v in validated
+                            if v.get("causal_confidence_penalty", 1.0) < 1.0
+                        ),
                     )
 
                 # Build rows for bulk_create

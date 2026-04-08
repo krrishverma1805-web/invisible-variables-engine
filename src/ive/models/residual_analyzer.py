@@ -74,6 +74,12 @@ class ResidualAnalysis:
     normal: bool = False
     shapiro_p: float | None = None
     durbin_watson: float | None = None
+    winsorized_std: float = 0.0
+    outlier_fraction: float = 0.0
+    multimodal: bool = False
+    dip_test_p: float | None = None
+    n_modes: int = 1
+    gmm_bic_improvement: float | None = None  # BIC(1-comp) - BIC(2-comp); positive = 2 is better
     warnings: list[str] = field(default_factory=list)
 
 
@@ -100,6 +106,33 @@ class ResidualAnalyzer:
         )
     """
 
+    @staticmethod
+    def winsorize_residuals(
+        residuals: np.ndarray,  # type: ignore[type-arg]
+        lower_pct: float = 1.0,
+        upper_pct: float = 99.0,
+    ) -> np.ndarray:  # type: ignore[type-arg]
+        """Winsorize residuals at given percentiles for robust analysis.
+
+        Clips extreme values to the specified percentile bounds.
+        Used during pattern detection to prevent outlier-dominated bins
+        from inflating KS test statistics.
+
+        NOT applied during model training --- training outliers may signal
+        the latent subgroups we're trying to discover.
+
+        Args:
+            residuals: Raw residual array.
+            lower_pct: Lower percentile bound (default 1st percentile).
+            upper_pct: Upper percentile bound (default 99th percentile).
+
+        Returns:
+            Winsorized residual array (copy, does not modify input).
+        """
+        lower = np.percentile(residuals, lower_pct)
+        upper = np.percentile(residuals, upper_pct)
+        return np.clip(residuals, lower, upper)
+
     def __init__(self, large_residual_threshold: float = _LARGE_RESIDUAL_SIGMA) -> None:
         """Initialise the analyzer.
 
@@ -108,6 +141,69 @@ class ResidualAnalyzer:
                 which a residual is considered "large".
         """
         self.threshold = large_residual_threshold
+
+    # ------------------------------------------------------------------
+    # Multimodality detection
+    # ------------------------------------------------------------------
+
+    def _test_multimodality(
+        self,
+        residuals: np.ndarray[Any, Any],
+        analysis: ResidualAnalysis,
+    ) -> None:
+        """Test for multimodal residual distribution.
+
+        A bimodal distribution strongly suggests a binary latent variable
+        (two distinct error regimes). Uses Hartigan's dip test for
+        unimodality, with GMM fit as confirmation.
+        """
+        if len(residuals) < 30:
+            return
+
+        # ── Hartigan's dip test ────────────────────────────────────
+        try:
+            from diptest import diptest
+
+            dip_stat, p_value = diptest(residuals)
+            analysis.dip_test_p = float(p_value)
+
+            if p_value < 0.05:
+                analysis.multimodal = True
+        except ImportError:
+            # diptest package not installed — fall through to GMM only
+            pass
+        except Exception:
+            pass
+
+        # ── GMM confirmation (2-component vs 1-component BIC) ─────
+        try:
+            from sklearn.mixture import GaussianMixture
+
+            X_resid = residuals.reshape(-1, 1)
+
+            gmm1 = GaussianMixture(n_components=1, random_state=42)
+            gmm1.fit(X_resid)
+            bic1 = gmm1.bic(X_resid)
+
+            gmm2 = GaussianMixture(n_components=2, random_state=42)
+            gmm2.fit(X_resid)
+            bic2 = gmm2.bic(X_resid)
+
+            improvement = bic1 - bic2  # positive = 2-component is better
+            analysis.gmm_bic_improvement = float(improvement)
+
+            if improvement > 10:  # BIC difference > 10 is strong evidence
+                analysis.multimodal = True
+                analysis.n_modes = 2
+        except Exception:
+            pass
+
+        if analysis.multimodal:
+            analysis.warnings.append(
+                "Residual distribution appears multimodal (bimodal). "
+                "This strongly suggests a binary latent variable — the model "
+                "makes systematically different errors for two distinct data regimes."
+            )
 
     # ------------------------------------------------------------------
     # Statistical analysis
@@ -160,6 +256,22 @@ class ResidualAnalyzer:
         else:
             analysis.pct_large = 0.0
 
+        # ── Outlier characterisation ─────────────────────────────────
+        lower_bound = float(np.percentile(residuals, 1.0))
+        upper_bound = float(np.percentile(residuals, 99.0))
+        n_outliers = int(np.sum((residuals < lower_bound) | (residuals > upper_bound)))
+        analysis.outlier_fraction = n_outliers / len(residuals)
+
+        winsorized = self.winsorize_residuals(residuals)
+        analysis.winsorized_std = float(np.std(winsorized))
+
+        if analysis.outlier_fraction > 0.05:
+            analysis.warnings.append(
+                f"High outlier rate: {analysis.outlier_fraction:.1%} of residuals exceed "
+                f"the 1st/99th percentile bounds [{lower_bound:.3f}, {upper_bound:.3f}]. "
+                "Consider reviewing extreme predictions."
+            )
+
         # ── Normality test (Shapiro-Wilk) ─────────────────────────────
         try:
             sample = residuals
@@ -172,6 +284,9 @@ class ResidualAnalyzer:
             analysis.normal = p_shapiro > _NORMALITY_ALPHA
         except Exception as exc:
             log.warning("ive.residual_analyzer.shapiro_failed", error=str(exc))
+
+        # ── Multimodality test (Dip + GMM) ────────────────────────────
+        self._test_multimodality(residuals, analysis)
 
         # ── Heteroscedasticity test (Breusch-Pagan) ───────────────────
         if X is not None and len(residuals) == X.shape[0]:
