@@ -194,7 +194,13 @@ class CrossValidator:
                     fold=fold_idx,
                     nan_count=nan_count,
                 )
-                preds = np.nan_to_num(preds, nan=float(np.nanmean(preds)))
+                fill_value = float(np.nanmean(preds))
+                if np.isnan(fill_value):
+                    raise RuntimeError(
+                        f"Fold {fold_idx} produced all-NaN predictions. "
+                        "The model failed to generate any valid outputs."
+                    )
+                preds = np.nan_to_num(preds, nan=fill_value)
 
             oof_predictions[val_idx] = preds
             fold_assignments[val_idx] = fold_idx

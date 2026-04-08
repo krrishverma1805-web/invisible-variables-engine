@@ -220,6 +220,11 @@ class DataPreprocessor:
 
         ct: ColumnTransformer = self._transformers["pipeline"]
         all_cols = self._numeric_cols + self._categorical_cols
+        missing = set(all_cols) - set(df.columns)
+        if missing:
+            raise ValueError(
+                f"Transform data is missing columns that were present during fit: {sorted(missing)}"
+            )
         return ct.transform(df[all_cols])  # type: ignore[no-any-return]
 
     def inverse_transform_column(

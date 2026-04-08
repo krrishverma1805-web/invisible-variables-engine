@@ -674,9 +674,16 @@ class S3ArtifactStore(ArtifactStore):
                 return True
             except client.exceptions.NoSuchKey:
                 return False
-            except Exception:
-                # botocore ClientError with 404 status code
-                return False
+            except Exception as exc:
+                # Only treat 404 ClientError as "not found"; re-raise everything else
+                try:
+                    from botocore.exceptions import ClientError
+                    if isinstance(exc, ClientError) and exc.response["Error"]["Code"] == "404":
+                        return False
+                except (ImportError, KeyError, TypeError):
+                    pass
+                logger.error("s3.file_exists_error", key=key, error=str(exc))
+                raise
 
     async def get_file_size(self, path: str) -> int:
         key = self._extract_key(path)

@@ -183,6 +183,14 @@ class PatternScorer:
                         if union > 0 and intersection / union > 0.9:
                             is_duplicate = True
                             break
+            else:
+                # No mask — deduplicate by column_name + source match
+                pat_col = pat.feature_references[0] if pat.feature_references else ""
+                for accepted in deduplicated:
+                    acc_col = accepted.feature_references[0] if accepted.feature_references else ""
+                    if pat_col and pat_col == acc_col and pat.source == accepted.source:
+                        is_duplicate = True
+                        break
             if not is_duplicate:
                 deduplicated.append(pat)
         scored = deduplicated

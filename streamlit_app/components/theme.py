@@ -295,7 +295,11 @@ def carbon_tag(text: str, color: str = "blue") -> str:
         text: Label text to display inside the tag.
         color: One of ``blue``, ``red``, ``green``, ``yellow``, ``gray``.
     """
-    return f'<span class="carbon-tag carbon-tag--{color}">{text}</span>'
+    from html import escape
+
+    safe_text = escape(text)
+    safe_color = escape(color)
+    return f'<span class="carbon-tag carbon-tag--{safe_color}">{safe_text}</span>'
 
 
 def carbon_status_dot(status: str) -> str:
@@ -304,4 +308,7 @@ def carbon_status_dot(status: str) -> str:
     Args:
         status: One of ``ok``, ``error``, ``warning``.
     """
-    return f'<span class="carbon-status-dot carbon-status-dot--{status}"></span>'
+    from html import escape
+
+    safe_status = escape(status)
+    return f'<span class="carbon-status-dot carbon-status-dot--{safe_status}"></span>'

@@ -25,11 +25,19 @@ def shap_bar_chart(feature_importance: dict[str, float], title: str = "Feature I
         st.info("No feature importance data available.")
         return
 
+    import math
+
     import pandas as pd
     import plotly.express as px
 
+    # Filter out NaN/Inf values
+    clean = {k: v for k, v in feature_importance.items() if not (math.isnan(v) or math.isinf(v))}
+    if not clean:
+        st.warning("All feature importance values are NaN or Inf.")
+        return
+
     df = pd.DataFrame(
-        sorted(feature_importance.items(), key=lambda x: x[1], reverse=True)[:20],
+        sorted(clean.items(), key=lambda x: x[1], reverse=True)[:20],
         columns=["Feature", "Importance"],
     )
 
@@ -83,7 +91,7 @@ def residual_histogram(residuals: list[float], title: str = "Residual Distributi
     # Normal distribution overlay
     x_range = np.linspace(residuals_arr.min(), residuals_arr.max(), 200)
     mu, sigma = residuals_arr.mean(), residuals_arr.std()
-    if sigma > 0:
+    if sigma > 1e-10:
         try:
             from scipy.stats import norm
 

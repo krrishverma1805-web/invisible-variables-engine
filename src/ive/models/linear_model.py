@@ -100,7 +100,9 @@ class LinearIVEModel(IVEModel):
             raise RuntimeError("Model must be fitted before get_shap_values().")
         # Exact linear SHAP: coef_i × (x_i - E[x_i])
         # E[X] is stored during fit() from the training set
-        baseline = self._training_mean if self._training_mean is not None else np.mean(X, axis=0)
+        if self._training_mean is None:
+            raise RuntimeError("Training mean not available — model must be fitted before get_shap_values().")
+        baseline = self._training_mean
         return cast(np.ndarray[Any, Any], (X - baseline) * self._model.coef_)
 
     def get_params(self) -> dict[str, Any]:

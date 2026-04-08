@@ -38,12 +38,16 @@ from sklearn.model_selection import train_test_split
 from ive.construction.bootstrap_validator import BootstrapValidator
 from ive.construction.explanation_generator import ExplanationGenerator
 from ive.construction.variable_synthesizer import VariableSynthesizer
+from ive.data.preprocessor import DataPreprocessor
+from ive.data.validator import DataValidator
 from ive.db.models import Dataset, Experiment, LatentVariable
 from ive.db.repositories.dataset_repo import DatasetRepository
 from ive.db.repositories.experiment_repo import ExperimentRepository
 from ive.db.repositories.latent_variable_repo import LatentVariableRepository
 from ive.detection.clustering import HDBSCANClustering
+from ive.detection.pattern_scorer import PatternScorer
 from ive.detection.subgroup_discovery import SubgroupDiscovery
+from ive.detection.temporal_analysis import TemporalAnalyzer
 from ive.models.cross_validator import CrossValidator
 from ive.models.linear_model import LinearIVEModel
 from ive.models.xgboost_model import XGBoostIVEModel
@@ -416,11 +420,48 @@ class IVEPipeline:
             X = df.drop(columns=[target_col])
             y: pd.Series = df[target_col]
 
+            # ── Validate data before proceeding ──────────────────────
+            validator = DataValidator()
+            validation_result = validator.validate(df, target_col)
+            for warn_msg in validation_result.warnings:
+                self.logger.warning("pipeline.validation_warning", msg=warn_msg)
+
             schema: dict[str, Any] = dataset.schema_json or {}
             X = _drop_non_feature_columns(X, schema, getattr(dataset, "time_column", None))
 
-            # Fill remaining NaNs with column medians so sklearn doesn't choke
-            X = X.select_dtypes(include=[np.number]).fillna(X.median(numeric_only=True))
+            # Drop zero-variance columns flagged by validator
+            if validation_result.dropped_columns:
+                cols_to_drop = [c for c in validation_result.dropped_columns if c in X.columns]
+                if cols_to_drop:
+                    X = X.drop(columns=cols_to_drop)
+                    self.logger.info("pipeline.dropped_columns", columns=cols_to_drop)
+
+            # ── Preprocess features ──────────────────────────────────
+            # Infer column types from schema for the preprocessor
+            col_types: dict[str, str] | None = None
+            if schema.get("columns"):
+                col_types = {
+                    c["name"]: c.get("detected_type", "numeric")
+                    for c in schema["columns"]
+                    if c["name"] in X.columns
+                }
+
+            feature_columns = list(X.columns)
+            preprocessor = DataPreprocessor()
+            try:
+                X_processed, feature_names_out = preprocessor.fit_transform(
+                    X, feature_columns, column_types=col_types
+                )
+                # Convert to DataFrame with new feature names for downstream use
+                X = pd.DataFrame(X_processed, columns=feature_names_out, index=X.index)
+            except ValueError as prep_err:
+                self.logger.warning(
+                    "pipeline.preprocessor_fallback",
+                    error=str(prep_err),
+                )
+                # Fallback to numeric-only if preprocessor fails
+                X = X.select_dtypes(include=[np.number]).fillna(X.median(numeric_only=True))
+
             y_values = y.to_numpy(dtype=np.float64)
 
             # ── Holdout split ────────────────────────────────────────
@@ -636,6 +677,49 @@ class IVEPipeline:
             cl_patterns = hdb.detect(X_train, abs_residuals)
             all_patterns.extend(cl_patterns)
 
+            # ── Temporal analysis (if time column available) ──────────
+            time_col_name = getattr(dataset, "time_column", None)
+            if time_col_name and time_col_name in df.columns:
+                try:
+                    temporal = TemporalAnalyzer(n_bins=5)
+                    temporal_patterns = temporal.analyze(df, residuals, [time_col_name])
+                    for tp in temporal_patterns:
+                        all_patterns.append({
+                            "pattern_type": "temporal",
+                            "column_name": tp.column,
+                            "pattern_subtype": tp.pattern_type,
+                            "effect_size": tp.effect_size,
+                            "p_value": tp.p_value,
+                            "sample_count": len(residuals),
+                            "mean_residual": 0.0,
+                            "std_residual": 0.0,
+                            "description": tp.description,
+                        })
+                    self.logger.info(
+                        "pipeline.temporal_done",
+                        n_temporal_patterns=len(temporal_patterns),
+                    )
+                except Exception as te:
+                    self.logger.warning("pipeline.temporal_failed", error=str(te))
+
+            # ── Score and rank patterns ───────────────────────────────
+            if all_patterns:
+                scorer = PatternScorer()
+                scored = scorer.score_and_rank(all_patterns, residuals, top_k=20)
+                if scored:
+                    # Convert ScoredPattern objects back to dicts for synthesis
+                    scored_dicts: list[dict[str, Any]] = []
+                    for sp in scored:
+                        raw = sp.raw_pattern if isinstance(sp.raw_pattern, dict) else {}
+                        raw["_composite_score"] = sp.composite_score
+                        scored_dicts.append(raw)
+                    all_patterns = scored_dicts
+                    self.logger.info(
+                        "pipeline.scoring_done",
+                        n_before=len(sg_patterns) + len(cl_patterns),
+                        n_after=len(scored_dicts),
+                    )
+
             # Log top patterns for operational tracing
             for i, p in enumerate(all_patterns[:10]):  # log top 10 only
                 self.logger.debug(
@@ -703,6 +787,12 @@ class IVEPipeline:
                 )
                 synth = VariableSynthesizer()
                 candidates = synth.synthesize(all_patterns, X_train)
+
+                # ── Causal plausibility check (annotate, don't discard) ──
+                from ive.construction.causal_checker import CausalChecker
+
+                causal_checker = CausalChecker()
+                candidates = causal_checker.filter(candidates, X_train, target_column=target_col)
 
                 validator = BootstrapValidator(mode=analysis_mode)  # type: ignore[arg-type]
                 validated = validator.validate(
@@ -835,6 +925,16 @@ class IVEPipeline:
                         if note:
                             hv_text += f" {note}"
                         row["explanation_text"] = (row.get("explanation_text") or "") + hv_text
+
+                    # Append causal warnings to explanation text
+                    causal_warnings = var.get("causal_warnings", [])
+                    causal_penalty = var.get("causal_confidence_penalty", 1.0)
+                    if causal_warnings:
+                        warnings_text = "; ".join(causal_warnings)
+                        row["explanation_text"] = (
+                            (row.get("explanation_text") or "")
+                            + f"\n[Causal check: {warnings_text} (confidence x{causal_penalty})]"
+                        )
 
                     lv_rows.append(row)
 

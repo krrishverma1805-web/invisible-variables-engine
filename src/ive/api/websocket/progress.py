@@ -274,12 +274,17 @@ async def experiment_progress(
                 try:
                     import json as _json
 
-                    message = await asyncio.wait_for(
-                        pubsub.get_message(ignore_subscribe_messages=True),  # type: ignore[union-attr]
+                    # Use async listen iterator with timeout to properly await messages
+                    # (get_message is non-blocking and would busy-loop)
+                    async def _wait_for_message():  # type: ignore[return]
+                        async for msg in pubsub.listen():  # type: ignore[union-attr]
+                            if msg and msg.get("type") == "message":
+                                return _json.loads(msg["data"])
+
+                    progress_data = await asyncio.wait_for(
+                        _wait_for_message(),
                         timeout=_POLL_INTERVAL,
                     )
-                    if message and message.get("type") == "message":
-                        progress_data = _json.loads(message["data"])
                 except asyncio.TimeoutError:
                     pass  # No message within interval — fall through to DB
                 except Exception:
