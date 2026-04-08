@@ -3,6 +3,7 @@ import os
 import pandas as pd
 import requests
 import streamlit as st
+from components.sidebar import render_sidebar
 from components.theme import apply_carbon_theme
 
 st.set_page_config(
@@ -11,6 +12,7 @@ st.set_page_config(
     layout="wide",
 )
 apply_carbon_theme()
+render_sidebar()
 
 API_BASE = os.getenv("API_BASE_URL", "http://api:8000")
 HEADERS = {"X-API-Key": "dev-key-1"}

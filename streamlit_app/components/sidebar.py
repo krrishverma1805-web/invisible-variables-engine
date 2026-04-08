@@ -5,6 +5,29 @@ import streamlit as st
 from components.theme import carbon_status_dot, carbon_tag
 
 
+def render_sidebar() -> None:
+    """Render the full sidebar: navigation links + release metadata + platform status."""
+    with st.sidebar:
+        st.header("Navigation")
+        st.page_link("app.py", label="Home", icon=":material/home:")
+        st.page_link("pages/01_upload.py", label="1. Upload Dataset", icon=":material/folder:")
+        st.page_link(
+            "pages/02_configure.py",
+            label="2. Configure Experiment",
+            icon=":material/settings:",
+        )
+        st.page_link(
+            "pages/03_monitor.py",
+            label="3. Monitor Progress",
+            icon=":material/hourglass_empty:",
+        )
+        st.page_link(
+            "pages/04_results.py", label="4. View Results", icon=":material/bar_chart:"
+        )
+
+        render_release_metadata()
+
+
 def render_release_metadata():
     """Renders release metadata and platform status in the sidebar."""
 

@@ -2,7 +2,7 @@ import os
 
 import requests
 import streamlit as st
-from components.sidebar import render_release_metadata
+from components.sidebar import render_sidebar
 from components.theme import apply_carbon_theme
 
 st.set_page_config(
@@ -16,19 +16,7 @@ API_BASE = os.getenv("API_BASE_URL", "http://api:8000")
 HEADERS = {"X-API-Key": "dev-key-1"}
 
 # --- Sidebar ---
-with st.sidebar:
-    st.header("Navigation")
-    st.page_link("app.py", label="Home", icon=":material/home:")
-    st.page_link("pages/01_upload.py", label="1. Upload Dataset", icon=":material/folder:")
-    st.page_link(
-        "pages/02_configure.py", label="2. Configure Experiment", icon=":material/settings:"
-    )
-    st.page_link(
-        "pages/03_monitor.py", label="3. Monitor Progress", icon=":material/hourglass_empty:"
-    )
-    st.page_link("pages/04_results.py", label="4. View Results", icon=":material/bar_chart:")
-
-    render_release_metadata()
+render_sidebar()
 
 # --- Main Page ---
 st.title("Invisible Variables Engine")

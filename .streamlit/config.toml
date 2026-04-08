@@ -9,9 +9,8 @@ headingFont = "IBM Plex Sans:https://fonts.googleapis.com/css2?family=IBM+Plex+S
 codeFont = "IBM Plex Mono:https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400&display=swap"
 baseFontSize = 16
 baseFontWeight = 400
-baseRadius = 0                          # Carbon: 0px border-radius everywhere
-buttonRadius = 0                        # Carbon: rectangular buttons
-headingFontWeights = [300, 400]         # h1=300 (Light), h2+=400 (Regular)
+baseRadius = "0rem"                     # Carbon: 0px border-radius everywhere
+buttonRadius = "0rem"                   # Carbon: rectangular buttons
 codeFontSize = "0.875rem"               # 14px
 codeFontWeight = 400
 showWidgetBorder = false                # Carbon: bottom-border only, not boxed
