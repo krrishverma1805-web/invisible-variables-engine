@@ -19,6 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+import pandas as pd
 import structlog
 
 log = structlog.get_logger(__name__)
@@ -83,7 +84,43 @@ class DataValidator:
                 f"Available columns: {list(df.columns)[:10]}"
             )
 
-        # TODO: Implement remaining checks (see docstring)
+        # Check target column has no nulls (only if column exists)
+        if target_column in df.columns:
+            null_count = int(df[target_column].isnull().sum())
+            if null_count > 0:
+                errors.append(
+                    f"Target column has {null_count} null values. "
+                    "All target values must be non-null."
+                )
+
+        # Check minimum rows
+        if len(df) < _MIN_ROWS:
+            errors.append(
+                f"Dataset has {len(df)} rows, minimum required is {_MIN_ROWS}."
+            )
+
+        # Check minimum features (excluding target column)
+        num_features = len(df.columns) - 1
+        if num_features < _MIN_FEATURES:
+            errors.append(
+                f"Dataset has {num_features} features, minimum required is {_MIN_FEATURES}."
+            )
+
+        # Check for zero-variance columns
+        for col in df.select_dtypes(include="number").columns:
+            if df[col].nunique() <= 1:
+                dropped_columns.append(col)
+                warnings.append(
+                    f"Column '{col}' has zero variance and will be dropped."
+                )
+
+        # Check for duplicate rows
+        dup_count = int(df.duplicated().sum())
+        if dup_count > 0:
+            pct = round(dup_count / len(df) * 100, 1)
+            warnings.append(
+                f"Dataset contains {dup_count} duplicate rows ({pct}% of data)."
+            )
 
         is_valid = len(errors) == 0
         if not is_valid:
@@ -118,5 +155,30 @@ class DataValidator:
               (continuous float → regression, integer/string ≤ 20 unique → classification)
             - Validate the detected task type is supported
         """
-        # TODO: Detect task type from target column
+        _VALID_TYPES = ("regression", "classification")
+
+        if task_type != "auto":
+            if task_type not in _VALID_TYPES:
+                raise ValueError(
+                    f"Unsupported task_type '{task_type}'. "
+                    f"Must be one of {_VALID_TYPES} or 'auto'."
+                )
+            return task_type
+
+        # Auto-detect from target series
+        target_series = pd.Series(target) if not isinstance(target, pd.Series) else target
+
+        if (
+            target_series.dtype == "bool"
+            or pd.api.types.is_object_dtype(target_series)
+            or pd.api.types.is_string_dtype(target_series)
+        ):
+            return "classification"
+
+        if pd.api.types.is_float_dtype(target_series) and target_series.nunique() > 20:
+            return "regression"
+
+        if pd.api.types.is_integer_dtype(target_series) and target_series.nunique() <= 20:
+            return "classification"
+
         return "regression"

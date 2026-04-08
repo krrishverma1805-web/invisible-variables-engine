@@ -33,6 +33,8 @@ import numpy as np
 import pandas as pd
 import structlog
 
+from sklearn.model_selection import train_test_split
+
 from ive.construction.bootstrap_validator import BootstrapValidator
 from ive.construction.explanation_generator import ExplanationGenerator
 from ive.construction.variable_synthesizer import VariableSynthesizer
@@ -418,6 +420,52 @@ class IVEPipeline:
             X = X.select_dtypes(include=[np.number]).fillna(X.median(numeric_only=True))
             y_values = y.to_numpy(dtype=np.float64)
 
+            # ── Holdout split ────────────────────────────────────────
+            config: dict[str, Any] = getattr(experiment, "config_json", None) or {}
+            holdout_ratio = float(config.get("test_size", 0.2))
+            min_holdout_rows = 20
+            skip_holdout = (
+                holdout_ratio <= 0.0
+                or len(X) < min_holdout_rows * 2  # need enough for both sets
+            )
+
+            if skip_holdout:
+                X_train, X_holdout = X, X.iloc[0:0]  # empty holdout
+                y_train, y_holdout = y_values, y_values[0:0]
+                if holdout_ratio > 0.0:
+                    self.logger.warning(
+                        "pipeline.holdout_skipped",
+                        reason="dataset_too_small",
+                        n_rows=len(X),
+                        min_required=min_holdout_rows * 2,
+                    )
+            else:
+                time_column_name = getattr(dataset, "time_column", None)
+
+                if time_column_name and time_column_name in df.columns:
+                    # Temporal split: oldest rows for training, newest for holdout
+                    time_vals = df[time_column_name]
+                    sorted_indices = time_vals.argsort()
+                    split_point = int(len(sorted_indices) * (1 - holdout_ratio))
+                    train_indices = sorted_indices[:split_point]
+                    holdout_indices = sorted_indices[split_point:]
+                    X_train = X.iloc[train_indices]
+                    X_holdout = X.iloc[holdout_indices]
+                    y_train = y_values[train_indices]
+                    y_holdout = y_values[holdout_indices]
+                else:
+                    # Random split
+                    X_train, X_holdout, y_train, y_holdout = train_test_split(
+                        X, y_values, test_size=holdout_ratio, random_state=42
+                    )
+
+                self.logger.info(
+                    "pipeline.holdout_split",
+                    n_train=len(X_train),
+                    n_holdout=len(X_holdout),
+                    holdout_ratio=holdout_ratio,
+                )
+
             self.logger.info(
                 "pipeline.data_loaded",
                 n_rows=len(df),
@@ -440,11 +488,11 @@ class IVEPipeline:
             await exp_repo.update_progress(experiment_id, 20, "model")
 
             # ── Phase 2: Model — cross-validation ─────────────────────
-            config: dict[str, Any] = getattr(experiment, "config_json", None) or {}
             model_types = _parse_model_types(config)
             cv_folds: int = int(config.get("cv_folds", 5))
 
-            X_values = X.to_numpy(dtype=np.float64)
+            # Use training set only — holdout is reserved for validation
+            X_values = X_train.to_numpy(dtype=np.float64)
 
             all_residuals: list[dict[str, Any]] = []
 
@@ -464,7 +512,7 @@ class IVEPipeline:
                 model_instance = model_cls()
 
                 cv = CrossValidator(model_instance, n_splits=cv_folds, stratified=stratified)
-                cv_result = cv.fit(X_values, y_values)
+                cv_result = cv.fit(X_values, y_train)
 
                 oof_preds = cv_result.oof_predictions
                 oof_resid = cv_result.oof_residuals  # y - oof_preds
@@ -502,7 +550,7 @@ class IVEPipeline:
                 residual_rows = _build_residual_rows(
                     model_type,
                     cv_result.fold_assignments,
-                    y_values,
+                    y_train,
                     oof_preds,
                     oof_resid,
                 )
@@ -566,11 +614,11 @@ class IVEPipeline:
             )
 
             sg = SubgroupDiscovery(min_effect_size=sg_effect_size, min_bin_samples=sg_min_subgroup)
-            sg_patterns = sg.detect(X, residuals)
+            sg_patterns = sg.detect(X_train, residuals)
             all_patterns.extend(sg_patterns)
 
             hdb = HDBSCANClustering()
-            cl_patterns = hdb.detect(X, abs_residuals)
+            cl_patterns = hdb.detect(X_train, abs_residuals)
             all_patterns.extend(cl_patterns)
 
             # Bulk-insert patterns (more efficient than individual inserts)
@@ -627,12 +675,68 @@ class IVEPipeline:
                     metadata={"n_input_patterns": len(all_patterns)},
                 )
                 synth = VariableSynthesizer()
-                candidates = synth.synthesize(all_patterns, X)
+                candidates = synth.synthesize(all_patterns, X_train)
 
                 validator = BootstrapValidator(mode=analysis_mode)  # type: ignore[arg-type]
                 validated = validator.validate(
-                    X, candidates, n_iterations=int(config.get("bootstrap_iterations", 50))
+                    X_train, candidates, n_iterations=int(config.get("bootstrap_iterations", 50))
                 )
+
+                # ── Holdout validation ─────────────────────────────────
+                if len(X_holdout) > 0 and validated:
+                    synth_holdout = VariableSynthesizer()
+                    holdout_candidates = synth_holdout.synthesize(all_patterns, X_holdout)
+
+                    for var in validated:
+                        if var.get("status") != "validated":
+                            continue
+
+                        # Find matching holdout candidate by name
+                        matching = [
+                            c for c in holdout_candidates if c.get("name") == var.get("name")
+                        ]
+                        if not matching:
+                            var["holdout_validated"] = False
+                            var["holdout_note"] = "Could not reconstruct on holdout set"
+                            continue
+
+                        holdout_scores = matching[0].get("scores")
+                        if holdout_scores is None or len(holdout_scores) == 0:
+                            var["holdout_validated"] = False
+                            var["holdout_note"] = "No scores on holdout set"
+                            continue
+
+                        # Check if the variable separates holdout data meaningfully
+                        mask = holdout_scores > 0
+                        if mask.sum() < 5 or (~mask).sum() < 5:
+                            var["holdout_validated"] = False
+                            var["holdout_note"] = "Insufficient holdout samples in subgroups"
+                            continue
+
+                        # Check if the construction rule produces meaningful variance
+                        holdout_variance = float(np.var(holdout_scores))
+                        holdout_range = float(
+                            np.max(holdout_scores) - np.min(holdout_scores)
+                        )
+
+                        var["holdout_validated"] = (
+                            holdout_variance > 1e-6 and holdout_range > 0.01
+                        )
+                        var["holdout_variance"] = holdout_variance
+                        var["holdout_range"] = holdout_range
+
+                    n_holdout_passed = sum(
+                        1 for v in validated if v.get("holdout_validated") is True
+                    )
+                    n_validated = sum(
+                        1 for v in validated if v.get("status") == "validated"
+                    )
+                    self.logger.info(
+                        "pipeline.holdout_validation",
+                        n_holdout_passed=n_holdout_passed,
+                        n_validated=n_validated,
+                        holdout_size=len(X_holdout),
+                    )
 
                 # Build rows for bulk_create
                 lv_rows: list[dict[str, Any]] = []
@@ -654,6 +758,33 @@ class IVEPipeline:
                     # Persist rejection reason for rejected candidates
                     if var.get("rejection_reason"):
                         row["rejection_reason"] = var["rejection_reason"]
+
+                    # Embed holdout validation results
+                    if "holdout_validated" in var:
+                        holdout_info = {
+                            "holdout_validated": var["holdout_validated"],
+                        }
+                        if "holdout_note" in var:
+                            holdout_info["holdout_note"] = var["holdout_note"]
+                        if "holdout_variance" in var:
+                            holdout_info["holdout_variance"] = var["holdout_variance"]
+                        if "holdout_range" in var:
+                            holdout_info["holdout_range"] = var["holdout_range"]
+
+                        # Merge into construction_rule dict
+                        cr = row.get("construction_rule", {})
+                        if isinstance(cr, dict):
+                            cr["holdout_validation"] = holdout_info
+                            row["construction_rule"] = cr
+
+                        # Also append to explanation_text for visibility
+                        hv_label = "PASSED" if var["holdout_validated"] else "FAILED"
+                        note = var.get("holdout_note", "")
+                        hv_text = f"\n[Holdout validation: {hv_label}]"
+                        if note:
+                            hv_text += f" {note}"
+                        row["explanation_text"] = (row.get("explanation_text") or "") + hv_text
+
                     lv_rows.append(row)
 
                 if lv_rows:

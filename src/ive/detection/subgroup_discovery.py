@@ -5,8 +5,8 @@ Discovers feature-value subgroups where the model's residual distribution
 differs significantly from the global residual distribution.  Uses a
 column-by-column scan with binned quantile splits for numeric features and
 per-value grouping for categoricals, applying a two-sample
-Kolmogorov–Smirnov test with Bonferroni-corrected significance thresholds
-and filtering by Cohen's *d* effect size.
+Kolmogorov–Smirnov test with Benjamini-Hochberg FDR-controlled significance
+thresholds and filtering by Cohen's *d* effect size.
 
 Statistical pipeline
 --------------------
@@ -21,9 +21,10 @@ For each bin (subgroup) with ≥ ``min_subgroup_size`` samples (default 20):
 
 * Two-sample KS test:  ``scipy.stats.ks_2samp(bin_residuals, global_residuals)``
 * Cohen's *d*:  ``(mean_bin − mean_global) / std_global``  (guarded against σ = 0)
-* Bonferroni correction:  ``α_adj = α / max(1, total_bins_tested)``
+* Benjamini-Hochberg FDR correction via ``statsmodels.stats.multitest.multipletests``
 
-A pattern is retained when ``p < α_adj`` **and** ``|d| > min_effect_size`` (default 0.15).
+A pattern is retained when the BH procedure rejects at level ``α`` **and**
+``|d| > min_effect_size`` (default 0.15).
 
 The output is a list of pattern dicts sorted by ``|effect_size|`` descending,
 ready for the ``PatternScorer`` stage and eventual DB persistence.
@@ -38,6 +39,7 @@ import numpy as np
 import pandas as pd
 import structlog
 from scipy.stats import ks_2samp
+from statsmodels.stats.multitest import multipletests
 
 log = structlog.get_logger(__name__)
 
@@ -82,7 +84,7 @@ class SubgroupPattern:
 
 
 class SubgroupDiscovery:
-    """Column-scan subgroup discovery with Bonferroni-corrected KS tests.
+    """Column-scan subgroup discovery with BH-FDR-corrected KS tests.
 
     This is the primary Phase 3 class called by the detection orchestrator.
     It scans every column in *X*, bins values into subgroups, and tests
@@ -120,22 +122,23 @@ class SubgroupDiscovery:
         Args:
             X:         Feature DataFrame (n_samples × n_features).
             residuals: OOF residual array of shape ``(n_samples,)``.
-            alpha:     Family-wise significance level *before* Bonferroni
-                       correction (default 0.05).
+            alpha:     FDR level for Benjamini-Hochberg correction
+                       (default 0.05).
 
         Returns:
             List of pattern dicts sorted by ``|effect_size|`` descending.
             Each dict contains:
 
-            * ``pattern_type``  — always ``"subgroup"``
-            * ``column_name``   — feature column that defines the bin
-            * ``bin_value``     — string representation of the bin
-            * ``p_value``       — raw KS *p*-value
-            * ``adjusted_alpha``— Bonferroni-corrected threshold
-            * ``effect_size``   — Cohen's *d*
-            * ``sample_count``  — number of samples in this bin
-            * ``mean_residual`` — mean residual within the bin
-            * ``std_residual``  — std of residuals within the bin
+            * ``pattern_type``    — always ``"subgroup"``
+            * ``column_name``     — feature column that defines the bin
+            * ``bin_value``       — string representation of the bin
+            * ``p_value``         — raw KS *p*-value
+            * ``adjusted_p_value``— BH-FDR adjusted *p*-value
+            * ``adjusted_alpha``  — FDR level used for correction
+            * ``effect_size``     — Cohen's *d*
+            * ``sample_count``    — number of samples in this bin
+            * ``mean_residual``   — mean residual within the bin
+            * ``std_residual``    — std of residuals within the bin
 
         Raises:
             ValueError: If lengths of *X* and *residuals* differ.
@@ -167,16 +170,13 @@ class SubgroupDiscovery:
             column_bins.append((str(col), bins))
             num_total_bins_tested += len(bins)
 
-        adjusted_alpha = alpha / max(1, num_total_bins_tested)
-
         log.debug(
             "ive.subgroup_discovery.bins_counted",
             total_bins=num_total_bins_tested,
-            adjusted_alpha=round(adjusted_alpha, 8),
         )
 
-        # ── Pass 2: Test each bin ──────────────────────────────────────
-        patterns: list[dict[str, Any]] = []
+        # ── Pass 2: Collect all test results ──────────────────────────
+        all_tests: list[dict[str, Any]] = []
 
         for col_name, bins in column_bins:
             for bin_label, mask in bins:
@@ -197,18 +197,41 @@ class SubgroupDiscovery:
                 else:
                     effect_size = 0.0
 
-                if p_value < adjusted_alpha and abs(effect_size) > self.min_effect_size:
+                all_tests.append(
+                    {
+                        "column_name": col_name,
+                        "bin_label": str(bin_label),
+                        "p_value": float(p_value),
+                        "effect_size": float(effect_size),
+                        "sample_count": int(len(bin_residuals)),
+                        "mean_residual": float(np.mean(bin_residuals)),
+                        "std_residual": float(np.std(bin_residuals, ddof=0)),
+                    }
+                )
+
+        # ── Pass 3: BH-FDR correction ────────────────────────────────
+        patterns: list[dict[str, Any]] = []
+
+        if all_tests:
+            p_values = np.array([t["p_value"] for t in all_tests])
+            reject, adjusted_pvals, _, _ = multipletests(
+                p_values, alpha=alpha, method="fdr_bh"
+            )
+
+            for i, test in enumerate(all_tests):
+                if reject[i] and abs(test["effect_size"]) > self.min_effect_size:
                     patterns.append(
                         {
                             "pattern_type": "subgroup",
-                            "column_name": col_name,
-                            "bin_value": str(bin_label),
-                            "p_value": float(p_value),
-                            "adjusted_alpha": float(adjusted_alpha),
-                            "effect_size": float(effect_size),
-                            "sample_count": int(len(bin_residuals)),
-                            "mean_residual": float(np.mean(bin_residuals)),
-                            "std_residual": float(np.std(bin_residuals, ddof=0)),
+                            "column_name": test["column_name"],
+                            "bin_value": test["bin_label"],
+                            "p_value": test["p_value"],
+                            "adjusted_p_value": float(adjusted_pvals[i]),
+                            "adjusted_alpha": float(alpha),
+                            "effect_size": test["effect_size"],
+                            "sample_count": test["sample_count"],
+                            "mean_residual": test["mean_residual"],
+                            "std_residual": test["std_residual"],
                         }
                     )
 

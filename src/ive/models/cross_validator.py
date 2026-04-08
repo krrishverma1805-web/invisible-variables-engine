@@ -73,6 +73,7 @@ class CVResult:
     std_score: float = 0.0
     fitted_models: list[Any] = field(default_factory=list)
     feature_importances: list[dict[str, float]] = field(default_factory=list)
+    importance_stability: dict[str, float] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -217,6 +218,40 @@ class CrossValidator:
         mean_score = float(np.mean(fold_scores))
         std_score = float(np.std(fold_scores))
 
+        # ── Feature importance stability across folds ─────────────────
+        importance_stability: dict[str, float] = {}
+        if feature_importances and len(feature_importances) > 1:
+            # Collect all feature names across all folds
+            all_features: set[str] = set()
+            for fi in feature_importances:
+                all_features.update(fi.keys())
+
+            for feat in all_features:
+                # Get importance of this feature across all folds (0.0 if missing in a fold)
+                values = [fi.get(feat, 0.0) for fi in feature_importances]
+                arr = np.array(values)
+                mean_imp = float(np.mean(arr))
+                std_imp = float(np.std(arr))
+
+                # Coefficient of variation (CV) — lower is more stable
+                # Use 0.0 for features with zero mean importance (consistently unimportant)
+                if mean_imp > 1e-10:
+                    cv = std_imp / mean_imp
+                else:
+                    cv = 0.0
+                importance_stability[feat] = round(cv, 4)
+
+            # Log features with high instability (CV > 0.5)
+            unstable = {k: v for k, v in importance_stability.items() if v > 0.5}
+            if unstable:
+                log.warning(
+                    "ive.cross_validator.unstable_importances",
+                    n_unstable=len(unstable),
+                    top_unstable=dict(
+                        sorted(unstable.items(), key=lambda x: x[1], reverse=True)[:5]
+                    ),
+                )
+
         log.info(
             "ive.cross_validator.complete",
             model=self.model.model_name,
@@ -236,6 +271,7 @@ class CrossValidator:
             std_score=std_score,
             fitted_models=fitted_models,
             feature_importances=feature_importances,
+            importance_stability=importance_stability,
         )
 
     # ------------------------------------------------------------------

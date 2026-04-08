@@ -20,6 +20,8 @@ from typing import Any
 import numpy as np
 import structlog
 
+from ive.utils.statistics import cohens_d
+
 log = structlog.get_logger(__name__)
 
 # Minimum thresholds for a pattern to survive scoring
@@ -50,7 +52,7 @@ class PatternScorer:
     framework so that Phase 4 (Construct) works with a single ranked list.
     """
 
-    WEIGHTS = {"effect_size": 0.40, "stability": 0.35, "coverage": 0.25}
+    WEIGHTS = {"effect_size": 0.60, "stability": 0.0, "coverage": 0.40}
 
     def score_and_rank(
         self,
@@ -84,8 +86,106 @@ class PatternScorer:
         log.info("ive.pattern_scorer.start", n_raw=len(raw_patterns))
 
         scored: list[ScoredPattern] = []
+        n = len(residuals)
 
-        # TODO: Implement pattern scoring loop
+        for pat_obj in raw_patterns:
+            pat: dict[str, Any] = pat_obj if isinstance(pat_obj, dict) else getattr(pat_obj, "__dict__", {})
+            if not pat:
+                continue
+
+            # --- Build boolean sample_mask ---
+            sample_indices = pat.get("sample_indices")
+            if sample_indices is not None:
+                mask = np.zeros(n, dtype=bool)
+                idx = np.asarray(sample_indices, dtype=int)
+                idx = idx[(idx >= 0) & (idx < n)]
+                mask[idx] = True
+            else:
+                # Fallback: cannot reconstruct mask — use stored values
+                stored_es = pat.get("effect_size")
+                sample_count = pat.get("sample_count")
+                if stored_es is None or sample_count is None or sample_count < 5:
+                    log.debug("ive.pattern_scorer.skip_no_mask", pattern=pat.get("pattern_type"))
+                    continue
+                abs_d = float(abs(stored_es))
+                coverage = float(sample_count) / n if n > 0 else 0.0
+                composite = self._compute_composite(abs_d, 0.0, coverage)
+                source = "subgroup" if pat.get("pattern_type") == "subgroup" else "cluster"
+                feature_refs: list[str] = []
+                col = pat.get("column_name")
+                if col:
+                    feature_refs.append(str(col))
+                scored.append(
+                    ScoredPattern(
+                        source=source,
+                        raw_pattern=pat_obj,
+                        effect_size=abs_d,
+                        coverage=coverage,
+                        stability=0.0,
+                        composite_score=composite,
+                        feature_references=feature_refs,
+                        sample_mask=None,
+                    )
+                )
+                continue
+
+            # Skip patterns with very small sample counts
+            if mask.sum() < 5:
+                log.debug("ive.pattern_scorer.skip_small", count=int(mask.sum()))
+                continue
+
+            # --- Effect size (Cohen's d, absolute) ---
+            abs_d = float(abs(cohens_d(residuals[mask], residuals[~mask])))
+
+            # --- Coverage ---
+            coverage = float(mask.sum()) / n if n > 0 else 0.0
+
+            # --- Composite (stability = 0 until bootstrap wired) ---
+            composite = self._compute_composite(abs_d, 0.0, coverage)
+
+            # --- Source ---
+            source = "subgroup" if pat.get("pattern_type") == "subgroup" else "cluster"
+
+            # --- Feature references ---
+            feature_refs = []
+            col = pat.get("column_name")
+            if col:
+                feature_refs.append(str(col))
+
+            scored.append(
+                ScoredPattern(
+                    source=source,
+                    raw_pattern=pat_obj,
+                    effect_size=abs_d,
+                    coverage=coverage,
+                    stability=0.0,
+                    composite_score=composite,
+                    feature_references=feature_refs,
+                    sample_mask=mask,
+                )
+            )
+
+        # --- Filter by minimum thresholds ---
+        scored = [
+            p for p in scored if p.effect_size >= _MIN_EFFECT_SIZE and p.coverage >= _MIN_COVERAGE
+        ]
+
+        # --- De-duplicate overlapping patterns (Jaccard > 0.9) ---
+        scored.sort(key=lambda p: p.composite_score, reverse=True)
+        deduplicated: list[ScoredPattern] = []
+        for pat in scored:
+            is_duplicate = False
+            if pat.sample_mask is not None:
+                for accepted in deduplicated:
+                    if accepted.sample_mask is not None:
+                        intersection = np.count_nonzero(pat.sample_mask & accepted.sample_mask)
+                        union = np.count_nonzero(pat.sample_mask | accepted.sample_mask)
+                        if union > 0 and intersection / union > 0.9:
+                            is_duplicate = True
+                            break
+            if not is_duplicate:
+                deduplicated.append(pat)
+        scored = deduplicated
 
         scored.sort(key=lambda p: p.composite_score, reverse=True)
         log.info("ive.pattern_scorer.done", n_scored=len(scored))

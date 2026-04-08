@@ -38,6 +38,7 @@ class LinearIVEModel(IVEModel):
         self._model: Any = None
         self._feature_names: list[str] = []
         self._fitted = False
+        self._training_mean: np.ndarray[Any, Any] | None = None
 
     @property
     def model_name(self) -> str:
@@ -58,6 +59,7 @@ class LinearIVEModel(IVEModel):
         log.debug("ive.linear_model.fit", n_samples=X.shape[0], n_features=X.shape[1])
         self._model = Ridge(alpha=self.alpha)
         self._model.fit(X, y)
+        self._training_mean = np.mean(X, axis=0)
         self._fitted = True
 
     def predict(self, X: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
@@ -96,10 +98,10 @@ class LinearIVEModel(IVEModel):
         """
         if not self._fitted or self._model is None:
             raise RuntimeError("Model must be fitted before get_shap_values().")
-        # Approximate SHAP via coefficient × feature deviation
-        # TODO: Replace with shap.LinearExplainer for accuracy
-        feature_means = np.zeros(X.shape[1])
-        return cast(np.ndarray[Any, Any], (X - feature_means) * self._model.coef_)
+        # Exact linear SHAP: coef_i × (x_i - E[x_i])
+        # E[X] is stored during fit() from the training set
+        baseline = self._training_mean if self._training_mean is not None else np.mean(X, axis=0)
+        return cast(np.ndarray[Any, Any], (X - baseline) * self._model.coef_)
 
     def get_params(self) -> dict[str, Any]:
         return {"alpha": self.alpha, "model_type": "ridge"}

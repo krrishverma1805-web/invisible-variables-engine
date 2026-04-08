@@ -242,23 +242,24 @@ class TestSubgroupDiscovery:
             pytest.fail(f"detect() raised on zero-variance column: {exc}")
         assert isinstance(result, list)
 
-    def test_bonferroni_alpha_scales_with_bin_count(self) -> None:
-        """adjusted_alpha must decrease as more bins are tested."""
+    def test_fdr_correction_detects_strong_signal(self) -> None:
+        """BH-FDR correction should detect a strong planted signal."""
         rng = np.random.default_rng(13)
         n = 1000
         # 10 unique categories → 10 bins for that column
         cats = rng.choice([f"C{i}" for i in range(10)], n)
-        # Plant a very large anomaly to ensure detection despite Bonferroni
+        # Plant a very large anomaly to ensure detection
         residuals = np.where(cats == "C0", 10.0, rng.standard_normal(n) * 0.2)
         X = pd.DataFrame({"cat": cats})
 
         patterns = SubgroupDiscovery().detect(X, residuals)
-        if patterns:
-            top = patterns[0]
-            # adjusted_alpha < raw alpha (0.05)
-            assert (
-                top["adjusted_alpha"] < 0.05
-            ), f"Bonferroni-adjusted alpha {top['adjusted_alpha']:.4f} should be < 0.05"
+        assert len(patterns) >= 1, "BH-FDR should detect the planted anomaly"
+        top = patterns[0]
+        # adjusted_p_value should be present and significant
+        assert "adjusted_p_value" in top, "BH-FDR should produce adjusted_p_value"
+        assert top["adjusted_p_value"] < 0.05, (
+            f"Adjusted p-value {top['adjusted_p_value']:.6f} should be < 0.05 for strong signal"
+        )
 
 
 # ============================================================================

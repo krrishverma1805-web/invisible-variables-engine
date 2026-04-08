@@ -40,6 +40,10 @@ _CORR_REPORT_MIN = 0.30  # |r| below this → skip in matrix
 _OUTLIER_HIGH = 50.0  # >50% outliers → low issue
 _SKEW_THRESHOLD = 2.0  # |skewness| above this → low issue
 _IMBALANCE_RATIO = 0.20  # minority/majority below this → imbalanced
+_VIF_WARNING = 5.0  # VIF above this → medium multicollinearity warning
+_VIF_HIGH = 10.0  # VIF above this → high multicollinearity issue
+_VIF_CAP = 1000.0  # cap VIF to avoid inf values
+_VIF_MIN_ROWS = 10  # minimum rows required for VIF computation
 _TOP_VALUES = 10  # max top_values entries per categorical column
 _TOP_CORRELATIONS = 20  # max CorrelationPairs returned
 _SAMPLE_N = 5  # random sample values shown per column
@@ -55,7 +59,7 @@ _DEDUCT_LOW = 2
 # ---------------------------------------------------------------------------
 
 
-class TargetProfile(BaseModel):
+class TargetProfile(BaseModel):  # type: ignore[misc]
     """Statistical summary of the target / label column."""
 
     name: str
@@ -76,7 +80,7 @@ class TargetProfile(BaseModel):
     num_classes: int | None = None
 
 
-class ColumnProfile(BaseModel):
+class ColumnProfile(BaseModel):  # type: ignore[misc]
     """Per-column statistical summary."""
 
     name: str
@@ -111,7 +115,7 @@ class ColumnProfile(BaseModel):
     sample_values: list[Any] = Field(default_factory=list)
 
 
-class CorrelationPair(BaseModel):
+class CorrelationPair(BaseModel):  # type: ignore[misc]
     """A pair of features with their Pearson correlation coefficient."""
 
     feature_a: str
@@ -120,7 +124,15 @@ class CorrelationPair(BaseModel):
     abs_correlation: float
 
 
-class QualityIssue(BaseModel):
+class VifResult(BaseModel):  # type: ignore[misc]
+    """Variance Inflation Factor result for a single feature."""
+
+    feature: str
+    vif: float
+    severity: str  # "high" | "medium"
+
+
+class QualityIssue(BaseModel):  # type: ignore[misc]
     """A data quality issue detected during profiling."""
 
     severity: str  # "high" | "medium" | "low"
@@ -130,7 +142,7 @@ class QualityIssue(BaseModel):
     suggestion: str
 
 
-class DataProfile(BaseModel):
+class DataProfile(BaseModel):  # type: ignore[misc]
     """Complete statistical profile for a dataset."""
 
     dataset_id: str
@@ -144,6 +156,7 @@ class DataProfile(BaseModel):
 
     correlation_matrix: dict[str, dict[str, float]]
     top_correlations: list[CorrelationPair]
+    vif_results: list[VifResult] = Field(default_factory=list)
 
     quality_score: float  # 0–100
     quality_issues: list[QualityIssue]
@@ -213,9 +226,13 @@ class DataProfiler:
         # ── Correlation analysis ──────────────────────────────────────
         corr_matrix, top_corrs = self._compute_correlations(df, target_column, time_column)
 
+        # ── VIF multicollinearity analysis ────────────────────────────
+        vif_results = self._compute_vif(df, target_column, time_column)
+
         # ── Quality issues ────────────────────────────────────────────
         issues = self._detect_quality_issues(
-            df, col_profiles, top_corrs, target_stats, target_column
+            df, col_profiles, top_corrs, target_stats, target_column,
+            vif_results=vif_results,
         )
 
         # ── Quality score ─────────────────────────────────────────────
@@ -240,6 +257,7 @@ class DataProfiler:
             column_profiles=col_profiles,
             correlation_matrix=corr_matrix,
             top_correlations=top_corrs,
+            vif_results=vif_results,
             quality_score=score,
             quality_issues=issues,
             recommendations=recs,
@@ -506,6 +524,71 @@ class DataProfiler:
         return sparse, top_corrs
 
     # ------------------------------------------------------------------
+    # VIF multicollinearity analysis
+    # ------------------------------------------------------------------
+
+    def _compute_vif(
+        self,
+        df: pd.DataFrame,
+        target_column: str,
+        time_column: str | None,
+    ) -> list[VifResult]:
+        """Compute Variance Inflation Factor for numeric features.
+
+        VIF > 10 indicates problematic multicollinearity.
+        VIF > 5 is a warning.
+
+        Args:
+            df:            The dataset DataFrame.
+            target_column: Excluded from VIF computation.
+            time_column:   Excluded from VIF computation.
+
+        Returns:
+            List of :class:`VifResult` for features with VIF > 5.
+        """
+        from statsmodels.stats.outliers_influence import variance_inflation_factor
+
+        exclude: set[str] = {target_column}
+        if time_column:
+            exclude.add(time_column)
+
+        num_cols = [
+            c
+            for c in df.columns
+            if pd.api.types.is_numeric_dtype(df[c]) and c not in exclude
+        ]
+
+        if len(num_cols) < 2:
+            return []
+
+        # Drop rows with NaN and limit to numeric columns
+        X = df[num_cols].dropna()
+        if len(X) < _VIF_MIN_ROWS:
+            return []
+
+        results: list[VifResult] = []
+        try:
+            X_values = X.values.astype(float)
+            for i, col in enumerate(num_cols):
+                vif = variance_inflation_factor(X_values, i)
+                # Cap VIF to avoid inf values from singular matrices
+                vif = min(float(vif), _VIF_CAP)
+                if vif > _VIF_WARNING:
+                    severity = "high" if vif > _VIF_HIGH else "medium"
+                    results.append(
+                        VifResult(
+                            feature=col,
+                            vif=round(vif, 2),
+                            severity=severity,
+                        )
+                    )
+        except Exception:
+            # VIF can fail with singular or near-singular matrices
+            logger.warning("profiler.vif_failed", num_cols=len(num_cols))
+
+        return results
+
+    # ------------------------------------------------------------------
     # Quality issues
     # ------------------------------------------------------------------
 
@@ -516,6 +599,8 @@ class DataProfiler:
         top_corrs: list[CorrelationPair],
         target_stats: TargetProfile,
         target_column: str,
+        *,
+        vif_results: list[VifResult] | None = None,
     ) -> list[QualityIssue]:
         """Identify all data quality problems.
 
@@ -524,6 +609,7 @@ class DataProfiler:
             * constant_column    — zero variance
             * near_constant      — <5 unique numeric values
             * high_correlation   — |r| > 0.95 between two features
+            * multicollinearity  — VIF > 5 (medium) or VIF > 10 (high)
             * outliers           — >50% of values are IQR outliers
             * skewness           — |skewness| > 2
             * class_imbalance    — minority class < 20% of majority
@@ -534,6 +620,7 @@ class DataProfiler:
             top_corrs:     Pre-computed top correlations.
             target_stats:  Pre-computed target profile.
             target_column: Name of target column.
+            vif_results:   Pre-computed VIF results (optional).
 
         Returns:
             List of :class:`QualityIssue`.
@@ -658,6 +745,25 @@ class DataProfiler:
                     suggestion=(
                         "Apply SMOTE, class weighting, or oversample the minority class "
                         "before training."
+                    ),
+                )
+            )
+
+        # VIF multicollinearity
+        for vif_item in vif_results or []:
+            desc = "severe" if vif_item.severity == "high" else "moderate"
+            issues.append(
+                QualityIssue(
+                    severity=vif_item.severity,
+                    category="multicollinearity",
+                    column=vif_item.feature,
+                    message=(
+                        f"'{vif_item.feature}' has VIF={vif_item.vif}, "
+                        f"indicating {desc} multicollinearity."
+                    ),
+                    suggestion=(
+                        f"Consider removing or combining '{vif_item.feature}' with "
+                        "correlated features to reduce multicollinearity."
                     ),
                 )
             )
