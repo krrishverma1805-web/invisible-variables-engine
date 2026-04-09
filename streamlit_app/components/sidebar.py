@@ -24,6 +24,9 @@ def render_sidebar() -> None:
         st.page_link(
             "pages/04_results.py", label="4. View Results", icon=":material/bar_chart:"
         )
+        st.page_link(
+            "pages/05_compare.py", label="5. Compare Experiments", icon=":material/compare_arrows:"
+        )
 
         render_release_metadata()
 

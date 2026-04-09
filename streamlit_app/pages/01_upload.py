@@ -78,6 +78,67 @@ if submitted:
                             qs = f"{qs:.1f}/100"
                         st.metric("Quality Score", qs)
 
+                    # Fetch full profile
+                    ds_id = res_data.get("id")
+                    if ds_id:
+                        try:
+                            profile_resp = requests.get(
+                                f"{API_BASE}/api/v1/datasets/{ds_id}/profile",
+                                headers=HEADERS,
+                                timeout=10,
+                            )
+                            if profile_resp.ok:
+                                profile = profile_resp.json()
+
+                                # Quality Issues
+                                quality_issues = profile.get("quality_issues", [])
+                                if quality_issues:
+                                    st.subheader("Data Quality Issues")
+                                    for issue in quality_issues:
+                                        severity = issue.get("severity", "low")
+                                        if severity == "high":
+                                            st.error(
+                                                f"**{issue.get('column', 'N/A')}:** "
+                                                f"{issue.get('message', '')}"
+                                            )
+                                        elif severity == "medium":
+                                            st.warning(
+                                                f"**{issue.get('column', 'N/A')}:** "
+                                                f"{issue.get('message', '')}"
+                                            )
+                                        else:
+                                            st.info(
+                                                f"**{issue.get('column', 'N/A')}:** "
+                                                f"{issue.get('message', '')}"
+                                            )
+
+                                # Recommendations
+                                recommendations = profile.get("recommendations", [])
+                                if recommendations:
+                                    st.subheader("Recommendations")
+                                    for rec in recommendations:
+                                        st.markdown(f"- {rec}")
+
+                                # Top Correlations
+                                top_corrs = profile.get("top_correlations", [])
+                                if top_corrs:
+                                    st.subheader("Top Feature Correlations")
+                                    corr_df = pd.DataFrame(
+                                        [
+                                            {
+                                                "Feature A": c.get("feature_a", ""),
+                                                "Feature B": c.get("feature_b", ""),
+                                                "Correlation": f"{c.get('correlation', 0):.3f}",
+                                            }
+                                            for c in top_corrs[:10]
+                                        ]
+                                    )
+                                    st.dataframe(
+                                        corr_df, use_container_width=True, hide_index=True
+                                    )
+                        except requests.RequestException:
+                            pass  # Profile is optional
+
                 else:
                     st.error(f"Upload failed: {response.text}")
             except requests.RequestException as e:
@@ -119,6 +180,54 @@ try:
                 )
 
             st.dataframe(pd.DataFrame(df_data), use_container_width=True, hide_index=True)
+
+            # Delete dataset
+            st.caption("Select a dataset to delete:")
+            delete_options = {ds.get("name", "Unknown"): ds.get("id") for ds in datasets}
+            if delete_options:
+                del_name = st.selectbox(
+                    "Dataset to delete", list(delete_options.keys()), key="del_ds"
+                )
+                if st.button("Delete Dataset", type="secondary"):
+                    del_id = delete_options[del_name]
+                    # Check for associated experiments
+                    try:
+                        exp_resp = requests.get(
+                            f"{API_BASE}/api/v1/experiments/",
+                            headers=HEADERS,
+                            params={"dataset_id": del_id},
+                            timeout=5,
+                        )
+                        n_experiments = 0
+                        if exp_resp.ok:
+                            n_experiments = exp_resp.json().get("total", 0)
+                    except requests.RequestException:
+                        n_experiments = 0
+
+                    if n_experiments > 0:
+                        st.warning(
+                            f"This dataset has **{n_experiments} experiment(s)**. "
+                            "Deleting it will also remove all associated experiments "
+                            "and results."
+                        )
+
+                    confirm_key = f"confirm_del_{del_id}"
+                    if st.checkbox(
+                        f"I confirm I want to delete '{del_name}'", key=confirm_key
+                    ):
+                        try:
+                            del_resp = requests.delete(
+                                f"{API_BASE}/api/v1/datasets/{del_id}",
+                                headers=HEADERS,
+                                timeout=10,
+                            )
+                            if del_resp.status_code == 204:
+                                st.success(f"Dataset '{del_name}' deleted.")
+                                st.rerun()
+                            else:
+                                st.error(f"Delete failed: {del_resp.text}")
+                        except requests.RequestException as e:
+                            st.error(f"Connection error: {str(e)}")
         else:
             st.info("No datasets uploaded yet.")
     else:

@@ -4,6 +4,7 @@ import os
 import pandas as pd
 import requests
 import streamlit as st
+from components.charts import shap_bar_chart, residual_histogram, coverage_gauge
 from components.sidebar import render_sidebar
 from components.theme import apply_carbon_theme
 
@@ -242,6 +243,11 @@ if summary_data:
         for rec in recommendations:
             st.markdown(f"- {rec}")
 
+    # Feature importance chart (if summary has feature data)
+    feature_importance = summary_data.get("feature_importance", {})
+    if feature_importance:
+        shap_bar_chart(feature_importance, title="Feature Importance (SHAP)")
+
     st.divider()
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -271,44 +277,164 @@ st.divider()
 # ═══════════════════════════════════════════════════════════════════════
 # Section: Validated Latent Variables
 # ═══════════════════════════════════════════════════════════════════════
-st.subheader("Validated Latent Variables")
+st.subheader("Latent Variables")
 validated_lvs = [v for v in lv_data if v.get("status") == "validated"]
+rejected_lvs = [v for v in lv_data if v.get("status") == "rejected"]
 
-if validated_lvs:
-    for lv in validated_lvs:
-        with st.expander(
-            f"{lv.get('name')} (Stability: {lv.get('stability_score', 0):.2f})",
-            expanded=True,
-        ):
-            col_info, col_metrics = st.columns([2, 1])
+tab_validated, tab_rejected = st.tabs([
+    f"Validated ({len(validated_lvs)})",
+    f"Rejected ({len(rejected_lvs)})",
+])
 
-            with col_info:
-                st.markdown(f"**Description:** {lv.get('description', 'N/A')}")
-                st.markdown(f"**Explanation:** {lv.get('explanation_text', 'N/A')}")
-                st.markdown("**Construction Rule:**")
-                rule = lv.get("construction_rule", {})
-                st.code(json.dumps(rule, indent=2), language="json")
+with tab_validated:
+    if validated_lvs:
+        for lv in validated_lvs:
+            with st.expander(
+                f"{lv.get('name')} (Stability: {lv.get('stability_score', 0):.2f})",
+                expanded=True,
+            ):
+                col_info, col_metrics = st.columns([2, 1])
 
-            with col_metrics:
-                presence_rate = lv.get("bootstrap_presence_rate", 0) * 100
-                st.metric("Bootstrap Presence", f"{presence_rate:.1f}%")
-                st.metric("Importance Score", f"{lv.get('importance_score', 0):.3f}")
-                boot_mode = lv.get("bootstrap_mode", analysis_mode)
-                st.caption(f"Validated in **{boot_mode.capitalize()}** mode")
+                with col_info:
+                    st.markdown(f"**Description:** {lv.get('description', 'N/A')}")
+                    st.markdown(f"**Explanation:** {lv.get('explanation_text', 'N/A')}")
+                    st.markdown("**Construction Rule:**")
+                    rule = lv.get("construction_rule", {})
+                    st.code(json.dumps(rule, indent=2), language="json")
 
-else:
-    # Context-aware empty state
-    if analysis_mode == "demo" and total_patterns > 0:
-        st.info(
-            "**Demo mode** — Patterns were detected but none passed stability validation. "
-            "This dataset may require a stronger hidden signal or more rows to reach "
-            "the stability threshold."
-        )
-    elif analysis_mode == "production" and total_patterns > 0:
-        st.warning(
-            "**Production mode** — Patterns were detected but none met the stricter "
-            "stability requirements. Consider switching to **Demo** mode for exploratory analysis, "
-            "or review the dataset for a clearer hidden-variable structure."
-        )
+                with col_metrics:
+                    presence_rate = lv.get("bootstrap_presence_rate", 0) * 100
+                    st.metric("Bootstrap Presence", f"{presence_rate:.1f}%")
+                    st.metric("Importance Score", f"{lv.get('importance_score', 0):.3f}")
+                    boot_mode = lv.get("bootstrap_mode", analysis_mode)
+                    st.caption(f"Validated in **{boot_mode.capitalize()}** mode")
+
+                    # Model improvement metrics
+                    improvement = lv.get("model_improvement_pct")
+                    if not improvement:
+                        # Check inside construction_rule
+                        rule = lv.get("construction_rule", {})
+                        improvement = rule.get("model_improvement_pct")
+
+                    if improvement and isinstance(improvement, dict):
+                        metric_name = improvement.get("metric", "R²").upper()
+                        baseline = improvement.get("baseline", 0)
+                        augmented = improvement.get("augmented", 0)
+                        imp_pct = improvement.get("improvement_pct", 0)
+                        order = improvement.get("selection_order", "")
+
+                        st.divider()
+                        st.markdown(f"**Model Improvement**")
+                        st.metric(
+                            f"{metric_name} Change",
+                            f"{augmented:.4f}",
+                            delta=f"+{imp_pct:.1f}%",
+                            delta_color="normal",
+                        )
+                        st.caption(f"Baseline {metric_name}: {baseline:.4f}")
+                        if order:
+                            st.caption(f"Selection order: #{order}")
+
     else:
-        st.info("No stable latent variables were constructed in this experiment.")
+        # Context-aware empty state
+        if analysis_mode == "demo" and total_patterns > 0:
+            st.info(
+                "**Demo mode** — Patterns were detected but none passed stability validation. "
+                "This dataset may require a stronger hidden signal or more rows to reach "
+                "the stability threshold."
+            )
+        elif analysis_mode == "production" and total_patterns > 0:
+            st.warning(
+                "**Production mode** — Patterns were detected but none met the stricter "
+                "stability requirements. Consider switching to **Demo** mode for exploratory analysis, "
+                "or review the dataset for a clearer hidden-variable structure."
+            )
+        else:
+            st.info("No stable latent variables were constructed in this experiment.")
+
+with tab_rejected:
+    if rejected_lvs:
+        for lv in rejected_lvs:
+            with st.expander(f"{lv.get('name')} — REJECTED", expanded=False):
+                rejection_reason = lv.get("rejection_reason", "Unknown")
+                st.error(f"**Rejection Reason:** {rejection_reason}")
+
+                explanation = lv.get("explanation_text", "")
+                if explanation:
+                    st.markdown(f"**Explanation:** {explanation}")
+
+                # Show causal warnings if present
+                rule = lv.get("construction_rule", {})
+                causal_info = rule.get("causal_warnings") or []
+                causal_penalty = rule.get("causal_confidence_penalty", 1.0)
+                if causal_info:
+                    for warning in causal_info:
+                        st.warning(f"**Causal Warning:** {warning}")
+                    st.caption(f"Confidence penalty: ×{causal_penalty}")
+
+                # Bootstrap stats
+                presence = lv.get("bootstrap_presence_rate", 0)
+                st.metric("Bootstrap Presence", f"{presence * 100:.1f}%")
+    else:
+        st.info("No rejected candidates for this experiment.")
+
+st.divider()
+
+# ═══════════════════════════════════════════════════════════════════════
+# Section: Apply Latent Variables to New Data
+# ═══════════════════════════════════════════════════════════════════════
+if validated_lvs:
+    st.subheader("Apply Latent Variables to New Data")
+    st.markdown("Upload a new CSV to compute latent variable scores on unseen data.")
+
+    apply_file = st.file_uploader("Upload CSV for scoring", type=["csv"], key="apply_csv")
+
+    if apply_file and st.button("Apply Latent Variables", type="primary"):
+        with st.spinner("Applying construction rules to new data..."):
+            try:
+                files = {"file": (apply_file.name, apply_file.getvalue(), "text/csv")}
+                data = {"experiment_id": experiment_id}
+                apply_resp = requests.post(
+                    f"{API_BASE}/api/v1/latent-variables/apply",
+                    headers=HEADERS,
+                    files=files,
+                    data=data,
+                    timeout=30,
+                )
+
+                if apply_resp.ok:
+                    result = apply_resp.json()
+                    n_applied = result.get("n_variables_applied", 0)
+                    n_failed = result.get("n_variables_failed", 0)
+
+                    if n_applied > 0:
+                        st.success(f"Successfully applied {n_applied} latent variable(s) to {result.get('n_rows', 0)} rows.")
+                    if n_failed > 0:
+                        st.warning(f"{n_failed} variable(s) could not be applied.")
+
+                    # Show results table
+                    cols_added = result.get("columns_added", [])
+                    if cols_added:
+                        for col_info in cols_added:
+                            if "error" in col_info:
+                                st.error(f"**{col_info['name']}:** {col_info['error']}")
+                            else:
+                                st.markdown(
+                                    f"**{col_info['name']}** — "
+                                    f"Mean: {col_info.get('mean_score', 0):.4f}, "
+                                    f"Non-zero: {col_info.get('non_zero_count', 0)}"
+                                )
+                elif apply_resp.status_code == 400:
+                    error_data = apply_resp.json().get("error", {})
+                    if error_data.get("code") == "SCHEMA_MISMATCH":
+                        st.error(
+                            f"**Schema Mismatch:** Your CSV is missing columns required "
+                            f"by the construction rules.\n\n"
+                            f"**Missing columns:** {error_data.get('message', '')}"
+                        )
+                    else:
+                        st.error(f"Error: {error_data.get('message', apply_resp.text)}")
+                else:
+                    st.error(f"Failed to apply: {apply_resp.text}")
+            except requests.RequestException as e:
+                st.error(f"Connection error: {str(e)}")

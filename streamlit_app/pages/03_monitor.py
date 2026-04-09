@@ -126,6 +126,23 @@ try:
         else:
             st.markdown(f"**Status:** {status.upper()}")
 
+        # Cancel button for running experiments
+        if status in ("running", "queued"):
+            if st.button("Cancel Experiment", type="secondary", key="cancel_btn"):
+                try:
+                    cancel_resp = requests.post(
+                        f"{API_BASE}/api/v1/experiments/{experiment_id}/cancel",
+                        headers=HEADERS,
+                        timeout=10,
+                    )
+                    if cancel_resp.ok:
+                        st.warning("Experiment cancellation requested.")
+                        st.rerun()
+                    else:
+                        st.error(f"Failed to cancel: {cancel_resp.text}")
+                except requests.RequestException as e:
+                    st.error(f"Connection error: {str(e)}")
+
         # ── Progress bar ──────────────────────────────────────────────────
         st.progress(
             progress / 100.0,
