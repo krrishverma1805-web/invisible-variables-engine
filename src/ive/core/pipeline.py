@@ -1329,12 +1329,26 @@ class IVEPipeline:
 
             # ── Generate experiment summary ───────────────────────────
             dataset_name = getattr(dataset, "name", "dataset")
+            # Compute best improvement for summary
+            _best_imp = 0.0
+            _baseline_met: float | None = None
+            for v in validated:
+                imp = v.get("model_improvement_pct", {})
+                if isinstance(imp, dict):
+                    _best_imp = max(_best_imp, imp.get("improvement_pct", 0.0))
+                    if _baseline_met is None:
+                        _baseline_met = imp.get("baseline")
+
             experiment_summary = explainer.generate_experiment_summary(
                 patterns=all_patterns,
                 candidates=validated,
                 dataset_name=dataset_name,
                 target_column=target_col,
                 analysis_mode=analysis_mode,
+                n_rows=len(X_train),
+                n_features=len(X_train.columns),
+                baseline_metric=_baseline_met,
+                best_improvement=_best_imp if _best_imp > 0 else None,
             )
 
             # ── Complete ──────────────────────────────────────────────

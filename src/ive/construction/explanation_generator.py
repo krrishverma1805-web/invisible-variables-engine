@@ -85,25 +85,61 @@ class ExplanationGenerator:
         col = p.get("column_name", "an unidentified feature")
         bin_val = p.get("bin_value", "a specific segment")
         sample_count = p.get("sample_count", 0)
-        effect = p.get("effect_size", 0.0)
+        effect = abs(p.get("effect_size", 0.0))
+        p_value = p.get("p_value", 1.0)
+        mean_resid = p.get("mean_residual", 0.0)
+        total_rows = p.get("total_rows", 0)
 
-        magnitude = "noticeably" if abs(effect) < 0.8 else "significantly"
+        # Effect size label
+        if effect >= 0.8:
+            effect_label = "large"
+        elif effect >= 0.5:
+            effect_label = "medium"
+        elif effect >= 0.2:
+            effect_label = "small"
+        else:
+            effect_label = "negligible"
+
+        # P-value in plain language
+        if p_value < 0.001:
+            p_label = "highly significant (p < 0.001)"
+        elif p_value < 0.01:
+            p_label = f"significant (p = {p_value:.3f})"
+        elif p_value < 0.05:
+            p_label = f"moderately significant (p = {p_value:.3f})"
+        else:
+            p_label = f"not statistically significant (p = {p_value:.3f})"
 
         parts = [
-            f"Prediction errors were {magnitude} different for records where "
-            f"{_humanise_col(col)} fell into the {_humanise_bin(bin_val)} segment",
+            f"Prediction errors showed a {effect_label} difference "
+            f"(effect size: {effect:.2f}) for records where "
+            f"{_humanise_col(col)} was in the {_humanise_bin(bin_val)} range"
         ]
+
         if sample_count:
-            parts.append(f" ({sample_count:,} records affected)")
-        parts.append(
-            ". This suggests the model behaves differently for this "
-            "subgroup, and an unrecorded condition may be influencing outcomes."
-        )
+            coverage = f" ({sample_count:,} records"
+            if total_rows and total_rows > 0:
+                pct = sample_count / total_rows * 100
+                coverage += f", {pct:.1f}% of data"
+            coverage += ")"
+            parts.append(coverage)
+
+        parts.append(f". This effect is {p_label}.")
+
+        if mean_resid != 0:
+            direction = "higher" if mean_resid > 0 else "lower"
+            parts.append(
+                f" Mean prediction error in this segment was {abs(mean_resid):.3f} "
+                f"({direction} than the dataset average)."
+            )
+
         return "".join(parts)
 
     def _summarise_cluster_pattern(self, p: dict[str, Any]) -> str:
         center: dict[str, float] = p.get("cluster_center", {})
         sample_count = p.get("sample_count", 0)
+        error_lift = p.get("error_lift", 0.0)
+        mean_error = p.get("mean_error", 0.0)
 
         if center:
             top_features = sorted(center.items(), key=lambda kv: abs(kv[1]), reverse=True)[:3]
@@ -117,6 +153,13 @@ class ExplanationGenerator:
         text = f"A dense cluster of high-error samples was detected {location}"
         if sample_count:
             text += f" ({sample_count:,} records)"
+
+        if error_lift and error_lift > 1.0:
+            text += f". Errors in this cluster are {error_lift:.1f}x the global average"
+
+        if mean_error:
+            text += f" (mean absolute error: {mean_error:.3f})"
+
         text += (
             ". This suggests a hidden condition affecting model accuracy "
             "for this subset of data."
@@ -169,13 +212,45 @@ class ExplanationGenerator:
         # Validated
         context = self._describe_rule(ptype, rule)
 
-        return (
+        parts = [
             f"{name} appears to represent an unrecorded condition {context}. "
+        ]
+
+        # Bootstrap evidence
+        parts.append(
             f"The variable was consistently recovered in {presence_pct}% of "
-            f"bootstrap resamples with a stability score of {stability:.2f}, "
-            f"indicating strong reliability. This suggests a real hidden "
-            f"operational factor that the current feature set does not capture."
+            f"bootstrap resamples (stability: {stability:.2f}), "
+            f"indicating {'strong' if stability >= 0.8 else 'moderate'} reliability. "
         )
+
+        # Holdout validation
+        holdout = candidate.get("holdout_validated")
+        if holdout is True:
+            parts.append(
+                "This finding was confirmed on held-out data not used during discovery. "
+            )
+        elif holdout is False:
+            parts.append("Note: this finding was not confirmed on held-out data. ")
+
+        # Model improvement
+        improvement = candidate.get("model_improvement_pct", {})
+        if isinstance(improvement, dict) and improvement.get("improvement_pct"):
+            imp_pct = improvement["improvement_pct"]
+            metric = improvement.get("metric", "R²").upper()
+            parts.append(
+                f"Adding this variable improved {metric} by +{imp_pct:.1f}%. "
+            )
+
+        # Causal warnings
+        causal_warnings = candidate.get("causal_warnings", [])
+        if causal_warnings:
+            parts.append(f"Caution: {'; '.join(causal_warnings)}. ")
+
+        parts.append(
+            "This suggests a real hidden operational factor that the current "
+            "feature set does not capture."
+        )
+        return "".join(parts)
 
     def _explain_rejected(
         self,
@@ -187,10 +262,8 @@ class ExplanationGenerator:
     ) -> str:
         """Build the explanation paragraph for a rejected candidate.
 
-        When a subgroup candidate was detected in analysis but failed
-        bootstrap validation entirely (zero presence), the explanation
-        highlights that the subgroup definition itself was not stable
-        across resampled datasets.
+        Includes specific gate failure counts from bootstrap diagnostics
+        so users understand exactly why the candidate did not survive.
 
         Args:
             name:          Candidate name.
@@ -207,38 +280,44 @@ class ExplanationGenerator:
             "its signal did not remain stable across bootstrap validation",
         )
 
-        # Detect repeated-detection-but-zero-bootstrap scenario
         diagnostics = candidate.get("bootstrap_diagnostics", {})
-        preflight_support = diagnostics.get("preflight_support", 0.0)
-        mean_boot_support = diagnostics.get("mean_bootstrap_support", 0.0)
+        survived = diagnostics.get("survived", 0)
+        total = diagnostics.get("total_iterations", 50)
 
-        if (
-            ptype == "subgroup"
-            and presence_pct == 0
-            and preflight_support > 0
-            and mean_boot_support < 0.001
-        ):
-            return (
-                f"{name} was initially detected as a potential hidden variable, "
-                f"but it did not pass stability validation "
-                f"(recovered in only {presence_pct}% of resamples). "
-                f"The signal was detected repeatedly at analysis time, but "
-                f"its subgroup definition did not remain stable enough across "
-                f"resampled datasets. "
-                f"This indicates the pattern is likely noise rather than a "
-                f"reliable hidden factor, and it has been excluded from the "
-                f"final results."
-            )
-
-        return (
+        parts = [
             f"{name} was initially detected as a potential hidden variable, "
             f"but it did not pass stability validation "
-            f"(recovered in only {presence_pct}% of resamples). "
+            f"(survived {survived} of {total} bootstrap resamples, {presence_pct}%). "
             f"The rejection was primarily driven by the fact that {reason_phrase}. "
-            f"This indicates the pattern is likely noise rather than a "
-            f"reliable hidden factor, and it has been excluded from the "
-            f"final results."
+        ]
+
+        # Specific gate failures
+        fail_details: list[str] = []
+        if diagnostics.get("fail_variance", 0) > 0:
+            fail_details.append(
+                f"variance gate failed {diagnostics['fail_variance']}x"
+            )
+        if diagnostics.get("fail_range", 0) > 0:
+            fail_details.append(
+                f"range gate failed {diagnostics['fail_range']}x"
+            )
+        if diagnostics.get("fail_support_low", 0) > 0:
+            fail_details.append(
+                f"support too sparse {diagnostics['fail_support_low']}x"
+            )
+        if diagnostics.get("fail_support_high", 0) > 0:
+            fail_details.append(
+                f"support too broad {diagnostics['fail_support_high']}x"
+            )
+
+        if fail_details:
+            parts.append(f"Specific failures: {', '.join(fail_details)}. ")
+
+        parts.append(
+            "This indicates the pattern is likely noise rather than a "
+            "reliable hidden factor."
         )
+        return "".join(parts)
 
     def _describe_rule(self, ptype: str, rule: dict[str, Any]) -> str:
         """Build a human-readable phrase describing the construction rule."""
@@ -298,12 +377,29 @@ class ExplanationGenerator:
 
         if ptype == "subgroup":
             col = rule.get("column", "the identified feature")
-            return (
+            improvement = candidate.get("model_improvement_pct", {})
+
+            text = (
                 f"Consider investigating whether an unrecorded condition "
-                f"related to {_humanise_col(col)} is influencing outcomes. "
-                f"Collecting additional data about this segment may "
-                f"improve model accuracy."
+                f"related to {_humanise_col(col)} is influencing outcomes."
             )
+
+            sample_count = candidate.get("sample_count", 0)
+            if sample_count:
+                text += f" This affects {sample_count:,} records in your data."
+
+            if isinstance(improvement, dict) and improvement.get("improvement_pct"):
+                text += (
+                    f" Addressing this could improve predictions by up to "
+                    f"{improvement['improvement_pct']:.1f}%."
+                )
+            else:
+                text += (
+                    " Collecting additional data about this segment may "
+                    "improve model accuracy."
+                )
+
+            return text
 
         if ptype == "cluster":
             center: dict[str, float] = rule.get("center", {})
@@ -327,7 +423,127 @@ class ExplanationGenerator:
         )
 
     # ------------------------------------------------------------------
-    # 4. Experiment summary
+    # 4. Evidence card (structured for UI rendering)
+    # ------------------------------------------------------------------
+
+    def generate_evidence_card(self, candidate: dict[str, Any]) -> dict[str, Any]:
+        """Return structured evidence for rich UI rendering.
+
+        Args:
+            candidate: Candidate dict from Phase 4.
+
+        Returns:
+            Dict with headline, confidence_level, key_stats, affected_segment,
+            records_affected, pct_affected, recommendation, and causal_warnings.
+        """
+        name = candidate.get("name", "Unknown")
+        ptype = candidate.get("pattern_type", "unknown")
+        rule = candidate.get("construction_rule", {})
+        presence = candidate.get("bootstrap_presence_rate", 0.0)
+        stability = candidate.get("stability_score", 0.0)
+        effect = abs(candidate.get("effect_size", 0.0))
+        p_value = candidate.get("p_value", 1.0)
+        improvement = candidate.get("model_improvement_pct", {})
+        holdout = candidate.get("holdout_validated")
+
+        # Confidence level
+        if stability >= 0.8 and holdout is True:
+            confidence = "high"
+        elif stability >= 0.6:
+            confidence = "medium"
+        else:
+            confidence = "low"
+
+        # Key stats
+        key_stats: list[dict[str, str]] = []
+        if effect > 0:
+            mag = "Large" if effect >= 0.8 else "Medium" if effect >= 0.5 else "Small"
+            key_stats.append({
+                "label": "Effect Size",
+                "value": f"{effect:.2f}",
+                "interpretation": f"{mag} effect",
+            })
+        if p_value < 1.0:
+            if p_value < 0.001:
+                p_interp = "Highly significant"
+            elif p_value < 0.05:
+                p_interp = "Significant"
+            else:
+                p_interp = "Not significant"
+            key_stats.append({
+                "label": "Significance",
+                "value": f"p = {p_value:.4f}",
+                "interpretation": p_interp,
+            })
+        if presence >= 0.8:
+            stab_interp = "Very stable"
+        elif presence >= 0.6:
+            stab_interp = "Stable"
+        else:
+            stab_interp = "Unstable"
+        key_stats.append({
+            "label": "Bootstrap Stability",
+            "value": f"{presence * 100:.0f}%",
+            "interpretation": stab_interp,
+        })
+        if isinstance(improvement, dict) and improvement.get("improvement_pct"):
+            imp_pct = improvement["improvement_pct"]
+            key_stats.append({
+                "label": "Model Improvement",
+                "value": f"+{imp_pct:.1f}%",
+                "interpretation": (
+                    "Meaningful gain" if imp_pct > 1 else "Marginal gain"
+                ),
+            })
+        if holdout is not None:
+            key_stats.append({
+                "label": "Holdout Validation",
+                "value": "Confirmed" if holdout else "Not confirmed",
+                "interpretation": (
+                    "Generalizes to new data" if holdout
+                    else "May not generalize"
+                ),
+            })
+
+        # Affected segment
+        if ptype == "subgroup":
+            col = rule.get("column", rule.get("column_name", ""))
+            val = rule.get("value", rule.get("bin_value", ""))
+            segment = (
+                f"{_humanise_col(col)} in range {_humanise_bin(val)}"
+                if col else "Unknown segment"
+            )
+        elif ptype == "interaction":
+            fa = rule.get("feature_a", "")
+            fb = rule.get("feature_b", "")
+            segment = f"Interaction of {_humanise_col(fa)} and {_humanise_col(fb)}"
+        else:
+            segment = "Cluster of high-error samples"
+
+        # Headline
+        if isinstance(improvement, dict) and improvement.get("improvement_pct"):
+            headline = (
+                f"{name}: improves predictions by "
+                f"+{improvement['improvement_pct']:.1f}%"
+            )
+        else:
+            headline = (
+                f"{name}: hidden factor detected with {confidence} confidence"
+            )
+
+        return {
+            "headline": headline,
+            "confidence_level": confidence,
+            "key_stats": key_stats,
+            "affected_segment": segment,
+            "records_affected": candidate.get("sample_count", 0),
+            "pct_affected": 0.0,  # caller can fill this if total_rows known
+            "recommendation": self.generate_business_recommendation(candidate),
+            "causal_warnings": candidate.get("causal_warnings", []),
+        }
+
+    # ------------------------------------------------------------------
+    # 5. Experiment summary
     # ------------------------------------------------------------------
 
     def generate_experiment_summary(
@@ -337,15 +553,23 @@ class ExplanationGenerator:
         dataset_name: str,
         target_column: str,
         analysis_mode: str = "demo",
+        n_rows: int = 0,
+        n_features: int = 0,
+        baseline_metric: float | None = None,
+        best_improvement: float | None = None,
     ) -> dict[str, Any]:
         """Generate an executive-level experiment summary.
 
         Args:
-            patterns:      Pattern dicts from Phase 3.
-            candidates:    Validated/rejected candidate dicts from Phase 4.
-            dataset_name:  Human-readable dataset name.
-            target_column: Name of the prediction target.
-            analysis_mode: ``"demo"`` or ``"production"``.
+            patterns:         Pattern dicts from Phase 3.
+            candidates:       Validated/rejected candidate dicts from Phase 4.
+            dataset_name:     Human-readable dataset name.
+            target_column:    Name of the prediction target.
+            analysis_mode:    ``"demo"`` or ``"production"``.
+            n_rows:           Number of rows in the analysed dataset.
+            n_features:       Number of features in the analysed dataset.
+            baseline_metric:  Baseline model metric before hidden variables.
+            best_improvement: Best improvement percentage from any candidate.
 
         Returns:
             Summary dict with headline, counts, narrative, top findings,
@@ -376,11 +600,21 @@ class ExplanationGenerator:
             headline = f"No hidden variables detected in {dataset_name}"
 
         # Summary text
-        summary_parts = [
-            f"The Invisible Variables Engine analyzed the {dataset_name} dataset "
-            f"to predict {_humanise_col(target_column)} "
-            f"using {mode_label} mode thresholds. "
-        ]
+        summary_parts: list[str] = []
+
+        if n_rows and n_features:
+            summary_parts.append(
+                f"The Invisible Variables Engine analyzed {n_rows:,} records "
+                f"across {n_features} features in the {dataset_name} dataset "
+                f"to predict {_humanise_col(target_column)} "
+                f"using {mode_label} mode thresholds. "
+            )
+        else:
+            summary_parts.append(
+                f"The Invisible Variables Engine analyzed the {dataset_name} dataset "
+                f"to predict {_humanise_col(target_column)} "
+                f"using {mode_label} mode thresholds. "
+            )
 
         if n_patterns == 0:
             summary_parts.append(
@@ -408,6 +642,12 @@ class ExplanationGenerator:
                     f"rejected as unstable or likely noise."
                 )
 
+        if best_improvement and best_improvement > 0:
+            summary_parts.append(
+                f" The best-performing hidden variable improved model accuracy by "
+                f"+{best_improvement:.1f}%. "
+            )
+
         summary_text = "".join(summary_parts)
 
         # Top findings: one sentence per validated variable
@@ -431,6 +671,10 @@ class ExplanationGenerator:
             "recommendations": recommendations,
             "analysis_mode": analysis_mode,
             "threshold_profile": threshold_profile,
+            "n_rows": n_rows,
+            "n_features": n_features,
+            "baseline_metric": baseline_metric,
+            "best_improvement": best_improvement,
         }
 
         log.info(

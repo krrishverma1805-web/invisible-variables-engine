@@ -6,7 +6,7 @@ import requests
 import streamlit as st
 from components.charts import shap_bar_chart, residual_histogram, coverage_gauge
 from components.sidebar import render_sidebar
-from components.theme import apply_carbon_theme
+from components.theme import apply_carbon_theme, carbon_tag
 
 st.set_page_config(
     page_title="Results Dashboard - IVE",
@@ -289,10 +289,24 @@ tab_validated, tab_rejected = st.tabs([
 with tab_validated:
     if validated_lvs:
         for lv in validated_lvs:
-            with st.expander(
-                f"{lv.get('name')} (Stability: {lv.get('stability_score', 0):.2f})",
-                expanded=True,
-            ):
+            # Build expander title with improvement if available
+            imp_data = lv.get("model_improvement_pct") or (lv.get("construction_rule") or {}).get("model_improvement_pct")
+            if isinstance(imp_data, dict) and imp_data.get("improvement_pct"):
+                expander_title = f"{lv.get('name')} — +{imp_data['improvement_pct']:.1f}% improvement (Stability: {lv.get('stability_score', 0):.2f})"
+            else:
+                expander_title = f"{lv.get('name')} (Stability: {lv.get('stability_score', 0):.2f})"
+
+            with st.expander(expander_title, expanded=True):
+                # Confidence badge
+                stability = lv.get("stability_score", 0)
+                holdout = (lv.get("construction_rule") or {}).get("holdout_validation", {}).get("holdout_validated")
+                if stability >= 0.8 and holdout is True:
+                    st.markdown(carbon_tag("High Confidence", "green"), unsafe_allow_html=True)
+                elif stability >= 0.6:
+                    st.markdown(carbon_tag("Medium Confidence", "blue"), unsafe_allow_html=True)
+                else:
+                    st.markdown(carbon_tag("Low Confidence", "yellow"), unsafe_allow_html=True)
+
                 col_info, col_metrics = st.columns([2, 1])
 
                 with col_info:
