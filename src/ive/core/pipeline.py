@@ -37,7 +37,7 @@ from sklearn.model_selection import train_test_split
 
 from ive.construction.bootstrap_validator import BootstrapValidator
 from ive.construction.explanation_generator import ExplanationGenerator
-from ive.construction.variable_synthesizer import VariableSynthesizer
+from ive.construction.variable_synthesizer import VariableSynthesizer, apply_construction_rule
 from ive.data.preprocessor import DataPreprocessor
 from ive.data.validator import DataValidator
 from ive.db.models import Dataset, Experiment, LatentVariable
@@ -635,13 +635,35 @@ class IVEPipeline:
                     },
                 )
 
+            # ── SHAP Interaction Analysis ────────────────────────────
+            from ive.detection.shap_interactions import SHAPInteractionAnalyzer
+
+            shap_interaction_pairs: list[tuple[str, str, float]] = []
+
+            if cv_result.fitted_models:
+                try:
+                    shap_analyzer = SHAPInteractionAnalyzer(sample_size=500)
+                    feature_names = list(X_train.columns)
+                    shap_result = shap_analyzer.compute(
+                        cv_result.fitted_models[-1],  # last fold's model
+                        X_values,
+                        feature_names,
+                        compute_interactions=True,
+                    )
+                    shap_interaction_pairs = shap_result.top_interaction_pairs
+                    self.logger.info(
+                        "pipeline.shap_done",
+                        n_interaction_pairs=len(shap_interaction_pairs),
+                        top_pair=shap_interaction_pairs[0] if shap_interaction_pairs else None,
+                    )
+                except Exception as shap_err:
+                    self.logger.warning("pipeline.shap_failed", error=str(shap_err))
+
             await exp_repo.update_progress(experiment_id, 55, "detect")
 
             # ── Phase 3: Detect — pattern analysis ────────────────────
-            # Use the last model's residuals (XGBoost if configured)
+            # Run detection on ALL models' residuals, then score by agreement
             primary = all_residuals[-1]
-            residuals = primary["residuals"]
-            abs_residuals = primary["abs_residuals"]
 
             # Read analysis mode from experiment config (default to 'demo' for safety)
             analysis_mode: str = str(config.get("analysis_mode", "demo")).lower()
@@ -669,13 +691,124 @@ class IVEPipeline:
                 metadata={"analysis_mode": analysis_mode, "residual_source": primary["model_type"]},
             )
 
-            sg = SubgroupDiscovery(min_effect_size=sg_effect_size, min_bin_samples=sg_min_subgroup)
-            sg_patterns = sg.detect(X_train, residuals)
-            all_patterns.extend(sg_patterns)
+            n_models = len(all_residuals)
 
-            hdb = HDBSCANClustering()
-            cl_patterns = hdb.detect(X_train, abs_residuals)
-            all_patterns.extend(cl_patterns)
+            if n_models <= 1:
+                # Single model — use the simple/fast path (no agreement scoring)
+                residuals = primary["residuals"]
+                abs_residuals = primary["abs_residuals"]
+
+                sg = SubgroupDiscovery(min_effect_size=sg_effect_size, min_bin_samples=sg_min_subgroup)
+                sg_patterns = sg.detect(X_train, residuals)
+                all_patterns.extend(sg_patterns)
+
+                hdb = HDBSCANClustering()
+                cl_patterns = hdb.detect(X_train, abs_residuals)
+                all_patterns.extend(cl_patterns)
+            else:
+                # Multi-model ensemble: detect per model, then score by agreement
+                per_model_patterns: dict[str, list[dict[str, Any]]] = {}
+
+                for resid_data in all_residuals:
+                    mtype = resid_data["model_type"]
+                    m_residuals = resid_data["residuals"]
+                    m_abs_residuals = resid_data["abs_residuals"]
+
+                    model_patterns: list[dict[str, Any]] = []
+
+                    sg = SubgroupDiscovery(min_effect_size=sg_effect_size, min_bin_samples=sg_min_subgroup)
+                    sg_pats = sg.detect(X_train, m_residuals)
+                    for p in sg_pats:
+                        p["source_model"] = mtype
+                    model_patterns.extend(sg_pats)
+
+                    hdb = HDBSCANClustering()
+                    cl_pats = hdb.detect(X_train, m_abs_residuals)
+                    for p in cl_pats:
+                        p["source_model"] = mtype
+                    model_patterns.extend(cl_pats)
+
+                    per_model_patterns[mtype] = model_patterns
+
+                # Merge patterns and compute ensemble agreement
+                primary_model = primary["model_type"]  # XGBoost if available
+                primary_patterns = per_model_patterns.get(primary_model, [])
+                other_models = [m for m in per_model_patterns if m != primary_model]
+
+                for pat in primary_patterns:
+                    pat_col = pat.get("column_name", "")
+                    pat_bin = pat.get("bin_value", "")
+                    pat_type = pat.get("pattern_type", "")
+
+                    agreement_count = 0
+                    agreement_models = [primary_model]
+
+                    for other_model in other_models:
+                        for other_pat in per_model_patterns[other_model]:
+                            if (other_pat.get("column_name") == pat_col
+                                    and other_pat.get("pattern_type") == pat_type
+                                    and other_pat.get("bin_value") == pat_bin):
+                                agreement_count += 1
+                                agreement_models.append(other_model)
+                                break
+
+                    agreement_ratio = (agreement_count + 1) / n_models  # +1 for primary
+
+                    # Asymmetric scoring:
+                    # - Found in both: confidence boost (x1.5)
+                    # - Found only in Linear: XGBoost captured the nonlinearity (annotate)
+                    # - Found only in XGBoost: nonlinear latent interaction
+                    if agreement_ratio >= 1.0:
+                        pat["ensemble_agreement"] = "consensus"
+                        pat["ensemble_confidence"] = 1.5
+                    elif primary_model == "xgboost":
+                        pat["ensemble_agreement"] = "xgboost_only"
+                        pat["ensemble_confidence"] = 1.0  # neutral
+                    else:
+                        pat["ensemble_agreement"] = "linear_only"
+                        pat["ensemble_confidence"] = 0.8  # slight penalty
+
+                    pat["agreement_models"] = agreement_models
+                    pat["agreement_ratio"] = agreement_ratio
+                    all_patterns.append(pat)
+
+                # Also add patterns unique to other models (not in primary)
+                for other_model in other_models:
+                    for other_pat in per_model_patterns[other_model]:
+                        other_col = other_pat.get("column_name", "")
+                        other_bin = other_pat.get("bin_value", "")
+                        other_type = other_pat.get("pattern_type", "")
+                        already_found = any(
+                            p.get("column_name") == other_col
+                            and p.get("bin_value") == other_bin
+                            and p.get("pattern_type") == other_type
+                            for p in primary_patterns
+                        )
+                        if not already_found:
+                            if other_model == "linear":
+                                other_pat["ensemble_agreement"] = "linear_only"
+                                other_pat["ensemble_confidence"] = 0.8
+                            else:
+                                other_pat["ensemble_agreement"] = f"{other_model}_only"
+                                other_pat["ensemble_confidence"] = 1.0
+                            other_pat["agreement_models"] = [other_model]
+                            other_pat["agreement_ratio"] = 1 / n_models
+                            all_patterns.append(other_pat)
+
+                # Use primary model's residuals for downstream scoring
+                residuals = primary["residuals"]
+                abs_residuals = primary["abs_residuals"]
+
+                # Track subgroup/cluster counts for logging (aggregate across models)
+                sg_patterns = [p for p in all_patterns if p.get("pattern_type") != "cluster"]
+                cl_patterns = [p for p in all_patterns if p.get("pattern_type") == "cluster"]
+
+                self.logger.info(
+                    "pipeline.ensemble_agreement",
+                    n_consensus=sum(1 for p in all_patterns if p.get("ensemble_agreement") == "consensus"),
+                    n_primary_only=sum(1 for p in all_patterns if "only" in p.get("ensemble_agreement", "")),
+                    n_total=len(all_patterns),
+                )
 
             # ── Temporal analysis (if time column available) ──────────
             time_col_name = getattr(dataset, "time_column", None)
@@ -701,6 +834,40 @@ class IVEPipeline:
                     )
                 except Exception as te:
                     self.logger.warning("pipeline.temporal_failed", error=str(te))
+
+            # ── SHAP interaction-based patterns ──────────────────────
+            if shap_interaction_pairs:
+                for feat_a, feat_b, strength in shap_interaction_pairs[:10]:
+                    if feat_a in X_train.columns and feat_b in X_train.columns:
+                        # Create interaction feature and test it
+                        interaction_values = X_train[feat_a].values * X_train[feat_b].values
+                        # Check if this interaction explains residuals
+                        from scipy.stats import pearsonr
+
+                        try:
+                            corr, p_val = pearsonr(interaction_values, residuals)
+                            if abs(corr) > 0.1 and p_val < 0.05:
+                                all_patterns.append({
+                                    "pattern_type": "interaction",
+                                    "column_name": f"{feat_a}_x_{feat_b}",
+                                    "feature_a": feat_a,
+                                    "feature_b": feat_b,
+                                    "interaction_strength": float(strength),
+                                    "correlation_with_residuals": float(corr),
+                                    "p_value": float(p_val),
+                                    "effect_size": float(abs(corr)),
+                                    "sample_count": len(residuals),
+                                    "mean_residual": 0.0,
+                                    "std_residual": float(np.std(residuals)),
+                                })
+                        except Exception:
+                            pass
+                self.logger.info(
+                    "pipeline.interaction_patterns",
+                    n_interaction_patterns=sum(
+                        1 for p in all_patterns if p.get("pattern_type") == "interaction"
+                    ),
+                )
 
             # ── Score and rank patterns ───────────────────────────────
             if all_patterns:
@@ -936,6 +1103,10 @@ class IVEPipeline:
                             + f"\n[Causal check: {warnings_text} (confidence x{causal_penalty})]"
                         )
 
+                    # Include model improvement metrics if available
+                    if var.get("model_improvement_pct"):
+                        row["model_improvement_pct"] = var["model_improvement_pct"]
+
                     lv_rows.append(row)
 
                 if lv_rows:
@@ -976,6 +1147,142 @@ class IVEPipeline:
                     phase="construct",
                     metadata={"n_candidates": 0, "n_validated": 0},
                 )
+
+            # ── Phase 5: Evaluate — retrain with latent variables ────
+            validated_lvs = [v for v in validated if v.get("status") == "validated"]
+
+            if validated_lvs and len(X_holdout) >= 20:
+                self.logger.info("pipeline.retrain_start", n_lvs=len(validated_lvs))
+
+                from sklearn.metrics import r2_score
+                try:
+                    from sklearn.metrics import roc_auc_score
+                except ImportError:
+                    roc_auc_score = None  # type: ignore[assignment]
+
+                # Determine task type (regression vs classification)
+                n_unique_target = len(np.unique(y_train))
+                is_classification = n_unique_target <= 20 and np.issubdtype(
+                    y_train.dtype, np.integer
+                )
+
+                # Baseline: train on X_train, evaluate on X_holdout
+                baseline_model = XGBoostIVEModel()
+                try:
+                    baseline_model.fit(X_values, y_train)
+                    baseline_preds = baseline_model.predict(X_holdout.to_numpy(dtype=np.float64))
+
+                    if is_classification and roc_auc_score:
+                        baseline_metric = float(roc_auc_score(y_holdout, baseline_preds))
+                        metric_name = "auc"
+                    else:
+                        baseline_metric = float(r2_score(y_holdout, baseline_preds))
+                        metric_name = "r2"
+
+                    self.logger.info(
+                        "pipeline.baseline_metric",
+                        metric=metric_name,
+                        value=round(baseline_metric, 4),
+                    )
+                except Exception as base_err:
+                    self.logger.warning("pipeline.baseline_failed", error=str(base_err))
+                    baseline_metric = None
+                    metric_name = "r2"
+
+                if baseline_metric is not None:
+                    # Greedy forward selection of LVs
+                    selected_lvs: list[dict[str, Any]] = []
+                    remaining_lvs = list(validated_lvs)
+                    current_metric = baseline_metric
+
+                    while remaining_lvs:
+                        best_improvement = -float("inf")
+                        best_lv: dict[str, Any] | None = None
+                        best_lv_metric = current_metric
+
+                        for lv in remaining_lvs:
+                            # Build augmented features: X + selected LVs + this candidate
+                            try:
+                                aug_cols_train: list[np.ndarray[Any, Any]] = []
+                                aug_cols_holdout: list[np.ndarray[Any, Any]] = []
+                                for sel_lv in selected_lvs + [lv]:
+                                    rule = sel_lv.get("construction_rule", {})
+                                    ptype = sel_lv.get("pattern_type", "subgroup")
+                                    train_scores = apply_construction_rule(rule, ptype, X_train)
+                                    holdout_scores = apply_construction_rule(rule, ptype, X_holdout)
+                                    aug_cols_train.append(train_scores)
+                                    aug_cols_holdout.append(holdout_scores)
+
+                                # Augment feature matrices
+                                X_aug_train = np.column_stack(
+                                    [X_values] + [s.reshape(-1, 1) for s in aug_cols_train]
+                                )
+                                X_aug_holdout = np.column_stack(
+                                    [X_holdout.to_numpy(dtype=np.float64)]
+                                    + [s.reshape(-1, 1) for s in aug_cols_holdout]
+                                )
+
+                                # Retrain and evaluate
+                                aug_model = XGBoostIVEModel()
+                                aug_model.fit(X_aug_train, y_train)
+                                aug_preds = aug_model.predict(X_aug_holdout)
+
+                                if is_classification and roc_auc_score:
+                                    aug_metric = float(roc_auc_score(y_holdout, aug_preds))
+                                else:
+                                    aug_metric = float(r2_score(y_holdout, aug_preds))
+
+                                improvement = aug_metric - current_metric
+                                if improvement > best_improvement:
+                                    best_improvement = improvement
+                                    best_lv = lv
+                                    best_lv_metric = aug_metric
+                            except Exception:
+                                continue
+
+                        if best_lv is None or best_improvement <= 0:
+                            break  # No more beneficial LVs
+
+                        selected_lvs.append(best_lv)
+                        remaining_lvs.remove(best_lv)
+
+                        # Record marginal improvement on the LV
+                        improvement_pct = (
+                            (best_improvement / max(abs(current_metric), 1e-10)) * 100
+                        )
+                        best_lv["model_improvement_pct"] = {
+                            "metric": metric_name,
+                            "baseline": round(current_metric, 6),
+                            "augmented": round(best_lv_metric, 6),
+                            "marginal_improvement": round(best_improvement, 6),
+                            "improvement_pct": round(improvement_pct, 2),
+                            "selection_order": len(selected_lvs),
+                        }
+
+                        current_metric = best_lv_metric
+                        self.logger.info(
+                            "pipeline.retrain_step",
+                            lv_name=best_lv.get("name"),
+                            order=len(selected_lvs),
+                            improvement_pct=round(improvement_pct, 2),
+                            new_metric=round(best_lv_metric, 4),
+                        )
+
+                    # Combined improvement (all selected LVs vs baseline)
+                    if selected_lvs:
+                        combined_improvement_pct = (
+                            (current_metric - baseline_metric)
+                            / max(abs(baseline_metric), 1e-10)
+                        ) * 100
+                        self.logger.info(
+                            "pipeline.retrain_complete",
+                            n_selected=len(selected_lvs),
+                            baseline=round(baseline_metric, 4),
+                            final=round(current_metric, 4),
+                            combined_improvement_pct=round(combined_improvement_pct, 2),
+                        )
+                    else:
+                        self.logger.info("pipeline.retrain_no_improvement")
 
             # ── Generate experiment summary ───────────────────────────
             dataset_name = getattr(dataset, "name", "dataset")

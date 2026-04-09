@@ -4,6 +4,7 @@ Experiment Endpoints — Invisible Variables Engine.
 Routes:
     POST   /experiments/                                — Create & queue experiment
     GET    /experiments/                                — List experiments (paginated)
+    GET    /experiments/compare                         — Compare experiments side-by-side
     GET    /experiments/{experiment_id}                 — Full experiment detail
     GET    /experiments/{experiment_id}/progress        — Lightweight progress poll
     GET    /experiments/{experiment_id}/patterns        — Error patterns discovered
@@ -25,7 +26,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -163,6 +164,155 @@ async def list_experiments(
         total=total,
         skip=skip,
         limit=limit,
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /experiments/compare  — Side-by-side comparison
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/compare",
+    summary="Compare two or more experiments side-by-side",
+    tags=["Reporting"],
+)
+async def compare_experiments(
+    ids: str = Query(..., description="Comma-separated experiment UUIDs"),
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    """Compare two or more experiments side-by-side.
+
+    Returns configuration diff, pattern overlap, and latent variable comparison.
+    """
+    import uuid as uuid_mod
+
+    # Parse experiment IDs
+    id_strings = [s.strip() for s in ids.split(",") if s.strip()]
+    if len(id_strings) < 2:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": {
+                    "code": "INSUFFICIENT_IDS",
+                    "message": "At least 2 experiment IDs required.",
+                }
+            },
+        )
+
+    try:
+        exp_ids = [uuid_mod.UUID(s) for s in id_strings]
+    except ValueError:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": {
+                    "code": "INVALID_ID",
+                    "message": "One or more experiment IDs are not valid UUIDs.",
+                }
+            },
+        )
+
+    # Fetch experiments
+    exp_repo = ExperimentRepository(db, Experiment)
+    lv_repo = LatentVariableRepository(db, LatentVariable)
+
+    experiments: list[dict[str, Any]] = []
+    for eid in exp_ids:
+        exp = await exp_repo.get_by_id(eid)
+        if exp is None:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "error": {
+                        "code": "NOT_FOUND",
+                        "message": f"Experiment {eid} not found.",
+                    }
+                },
+            )
+
+        # Get patterns and latent variables
+        patterns = await exp_repo.get_error_patterns(eid)
+        lvs = await lv_repo.get_by_experiment(eid)
+
+        config = exp.config_json or {}
+        experiments.append(
+            {
+                "id": str(exp.id),
+                "status": exp.status,
+                "dataset_id": str(exp.dataset_id),
+                "config": config,
+                "n_patterns": len(patterns),
+                "n_validated": sum(1 for lv in lvs if lv.status == "validated"),
+                "n_rejected": sum(1 for lv in lvs if lv.status == "rejected"),
+                "patterns": [
+                    {
+                        "type": p.pattern_type,
+                        "column": (p.subgroup_definition or {}).get(
+                            "column_name", "N/A"
+                        ),
+                        "effect_size": float(p.effect_size)
+                        if p.effect_size
+                        else 0.0,
+                    }
+                    for p in patterns
+                ],
+                "latent_variables": [
+                    {
+                        "name": lv.name,
+                        "status": lv.status,
+                        "stability_score": float(lv.stability_score)
+                        if lv.stability_score
+                        else 0.0,
+                        "importance_score": float(lv.importance_score)
+                        if lv.importance_score
+                        else 0.0,
+                    }
+                    for lv in lvs
+                ],
+            }
+        )
+
+    # Find configuration differences between first two experiments
+    config_diff: dict[str, Any] = {}
+    if len(experiments) >= 2:
+        config_a = experiments[0]["config"]
+        config_b = experiments[1]["config"]
+        all_keys = set(config_a.keys()) | set(config_b.keys())
+        for key in all_keys:
+            va = config_a.get(key)
+            vb = config_b.get(key)
+            if va != vb:
+                config_diff[key] = {"experiment_1": va, "experiment_2": vb}
+
+    # Find common and unique latent variables (by name)
+    common: set[str] = set()
+    unique_to_a: set[str] = set()
+    unique_to_b: set[str] = set()
+    if len(experiments) >= 2:
+        names_a = {lv["name"] for lv in experiments[0]["latent_variables"]}
+        names_b = {lv["name"] for lv in experiments[1]["latent_variables"]}
+        common = names_a & names_b
+        unique_to_a = names_a - names_b
+        unique_to_b = names_b - names_a
+
+    log.info(
+        "experiments.compare",
+        experiment_ids=[str(eid) for eid in exp_ids],
+        n_experiments=len(experiments),
+    )
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "experiments": experiments,
+            "config_diff": config_diff,
+            "latent_variable_overlap": {
+                "common": sorted(common),
+                "unique_to_first": sorted(unique_to_a),
+                "unique_to_second": sorted(unique_to_b),
+            },
+        },
     )
 
 

@@ -104,6 +104,8 @@ class VariableSynthesizer:
                 candidate = self._synthesize_subgroup(pattern, X, idx)
             elif ptype == "cluster":
                 candidate = self._synthesize_cluster(pattern, X, idx)
+            elif ptype == "interaction":
+                candidate = self._synthesize_interaction(pattern, X, idx)
             else:
                 log.warning(
                     "ive.synthesizer.unknown_pattern_type",
@@ -344,6 +346,70 @@ class VariableSynthesizer:
             "initial_variance": float(np.var(scores)) if len(scores) > 0 else 0.0,
         }
 
+    # ------------------------------------------------------------------
+    # Interaction synthesis
+    # ------------------------------------------------------------------
+
+    def _synthesize_interaction(
+        self,
+        pattern: dict[str, Any],
+        X: pd.DataFrame,
+        idx: int,
+    ) -> dict[str, Any] | None:
+        """Synthesize a latent variable from a feature interaction pattern.
+
+        Computes the element-wise product of two features and normalizes
+        the result to [0, 1].
+
+        Args:
+            pattern: Interaction pattern dict containing ``feature_a`` and
+                     ``feature_b``.
+            X:       Feature DataFrame.
+            idx:     Pattern index (used for fallback naming).
+
+        Returns:
+            Candidate dict, or ``None`` if either feature is missing from *X*.
+        """
+        feat_a = pattern.get("feature_a", "")
+        feat_b = pattern.get("feature_b", "")
+
+        if feat_a not in X.columns or feat_b not in X.columns:
+            log.warning(
+                "ive.synthesizer.interaction_missing_column",
+                feature_a=feat_a,
+                feature_b=feat_b,
+                pattern_index=idx,
+            )
+            return None
+
+        scores = X[feat_a].values * X[feat_b].values
+        # Normalize to [0, 1] range
+        s_min, s_max = scores.min(), scores.max()
+        if s_max - s_min > 0:
+            scores = (scores - s_min) / (s_max - s_min)
+        else:
+            scores = np.zeros_like(scores, dtype=np.float64)
+
+        return {
+            "name": f"Latent_Interaction_{_sanitise_name(feat_a)}_x_{_sanitise_name(feat_b)}",
+            "pattern_type": "interaction",
+            "construction_rule": {
+                "type": "interaction",
+                "feature_a": feat_a,
+                "feature_b": feat_b,
+                "normalize": True,
+                "original_min": float(s_min),
+                "original_max": float(s_max),
+            },
+            "scores": scores,
+            "effect_size": float(pattern.get("effect_size", 0.0)),
+            "p_value": float(pattern.get("p_value", 1.0)),
+            "sample_count": len(scores),
+            "initial_support_rate": float(np.sum(scores > 0) / max(1, len(scores))),
+            "initial_score_range": float(np.max(scores) - np.min(scores)),
+            "initial_variance": float(np.var(scores)),
+        }
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -526,6 +592,9 @@ def apply_construction_rule(
 
     if pattern_type == "cluster":
         return _apply_cluster_rule(rule, X, n)
+
+    if pattern_type == "interaction":
+        return _apply_interaction_rule(rule, X, n)
 
     # Unrecognised pattern type → zeros
     log.warning(
@@ -726,3 +795,47 @@ def _apply_cluster_rule(
     diff = sample_matrix - center_vec
     distances = np.sqrt(np.sum(diff**2, axis=1))
     return cast(np.ndarray[Any, Any], 1.0 / (1.0 + distances))
+
+
+def _apply_interaction_rule(
+    rule: dict[str, Any],
+    X: pd.DataFrame,
+    n: int,
+) -> np.ndarray[Any, Any]:
+    """Apply an interaction construction rule to a DataFrame.
+
+    Computes the element-wise product of two features and optionally
+    normalizes using the stored min/max from the original synthesis.
+
+    Args:
+        rule: The interaction ``construction_rule`` dict.
+        X:    Feature DataFrame (may be a bootstrap resample).
+        n:    Number of rows in X.
+
+    Returns:
+        1-D float64 array of interaction scores.
+    """
+    feat_a = rule.get("feature_a", "")
+    feat_b = rule.get("feature_b", "")
+
+    if feat_a not in X.columns or feat_b not in X.columns:
+        log.debug(
+            "ive.apply_rule.interaction_missing_columns",
+            feature_a=feat_a,
+            feature_b=feat_b,
+        )
+        return np.zeros(n, dtype=np.float64)
+
+    scores = (X[feat_a].values * X[feat_b].values).astype(np.float64)
+
+    if rule.get("normalize"):
+        s_min = rule.get("original_min", float(scores.min()))
+        s_max = rule.get("original_max", float(scores.max()))
+        rng = s_max - s_min
+        if rng > 0:
+            scores = (scores - s_min) / rng
+            scores = np.clip(scores, 0.0, 1.0)
+        else:
+            scores = np.zeros(n, dtype=np.float64)
+
+    return scores
