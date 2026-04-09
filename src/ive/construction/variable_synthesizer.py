@@ -385,7 +385,7 @@ class VariableSynthesizer:
         scores = X[feat_a].values * X[feat_b].values
         # Normalize to [0, 1] range
         s_min, s_max = scores.min(), scores.max()
-        has_range = (s_max - s_min) > 0
+        has_range = bool((s_max - s_min) > 0)  # Python bool, not numpy.bool_
         if has_range:
             scores = (scores - s_min) / (s_max - s_min)
         else:

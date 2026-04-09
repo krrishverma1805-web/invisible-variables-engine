@@ -240,6 +240,23 @@ def _parse_model_types(config: dict[str, Any]) -> list[str]:
     return types if types else ["linear", "xgboost"]
 
 
+def _sanitize_for_json(obj: Any) -> Any:
+    """Recursively convert numpy types to Python natives for JSON/JSONB serialization."""
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_for_json(v) for v in obj]
+    if isinstance(obj, (np.bool_,)):
+        return bool(obj)
+    if isinstance(obj, (np.integer,)):
+        return int(obj)
+    if isinstance(obj, (np.floating,)):
+        return float(obj)
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    return obj
+
+
 def _drop_non_feature_columns(
     X: pd.DataFrame,
     schema: dict[str, Any],
@@ -1038,7 +1055,7 @@ class IVEPipeline:
                             np.max(holdout_scores) - np.min(holdout_scores)
                         )
 
-                        var["holdout_validated"] = (
+                        var["holdout_validated"] = bool(
                             holdout_variance > 1e-6 and holdout_range > 0.01
                         )
                         var["holdout_variance"] = holdout_variance
@@ -1129,6 +1146,9 @@ class IVEPipeline:
                     # Include model improvement metrics if available
                     if var.get("model_improvement_pct"):
                         row["model_improvement_pct"] = var["model_improvement_pct"]
+
+                    # Sanitize numpy types for JSONB serialization
+                    row["construction_rule"] = _sanitize_for_json(row.get("construction_rule", {}))
 
                     lv_rows.append(row)
 
