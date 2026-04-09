@@ -249,11 +249,15 @@ async def compare_experiments(
                     {
                         "type": p.pattern_type,
                         "column": (p.subgroup_definition or {}).get(
-                            "column_name", "N/A"
+                            "column_name",
+                            (p.subgroup_definition or {}).get("cluster_id", "N/A"),
                         ),
-                        "effect_size": float(p.effect_size)
-                        if p.effect_size
+                        "effect_size": round(float(p.effect_size), 4)
+                        if p.effect_size is not None
                         else 0.0,
+                        "sample_count": int(p.sample_count)
+                        if p.sample_count is not None
+                        else 0,
                     }
                     for p in patterns
                 ],

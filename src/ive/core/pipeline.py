@@ -436,80 +436,88 @@ class IVEPipeline:
                     X = X.drop(columns=cols_to_drop)
                     self.logger.info("pipeline.dropped_columns", columns=cols_to_drop)
 
-            # ── Preprocess features ──────────────────────────────────
-            # Infer column types from schema for the preprocessor
-            col_types: dict[str, str] | None = None
-            if schema.get("columns"):
-                col_types = {
-                    c["name"]: c.get("detected_type", "numeric")
-                    for c in schema["columns"]
-                    if c["name"] in X.columns
-                }
-
-            feature_columns = list(X.columns)
-            preprocessor = DataPreprocessor()
-            try:
-                X_processed, feature_names_out = preprocessor.fit_transform(
-                    X, feature_columns, column_types=col_types
-                )
-                # Convert to DataFrame with new feature names for downstream use
-                X = pd.DataFrame(X_processed, columns=feature_names_out, index=X.index)
-            except ValueError as prep_err:
-                self.logger.warning(
-                    "pipeline.preprocessor_fallback",
-                    error=str(prep_err),
-                )
-                # Fallback to numeric-only if preprocessor fails
-                X = X.select_dtypes(include=[np.number]).fillna(X.median(numeric_only=True))
+            # Keep raw X for detection (construction rules must reference
+            # original column names so they work in holdout, bootstrap, and
+            # the /apply API). Preprocessing is only for model training.
+            X_raw = X.copy()
 
             y_values = y.to_numpy(dtype=np.float64)
 
-            # ── Holdout split ────────────────────────────────────────
+            # ── Holdout split (BEFORE preprocessing to avoid leakage) ──
             config: dict[str, Any] = getattr(experiment, "config_json", None) or {}
             holdout_ratio = float(config.get("test_size", 0.2))
             min_holdout_rows = 20
             skip_holdout = (
                 holdout_ratio <= 0.0
-                or len(X) < min_holdout_rows * 2  # need enough for both sets
+                or len(X_raw) < min_holdout_rows * 2
             )
 
             if skip_holdout:
-                X_train, X_holdout = X, X.iloc[0:0]  # empty holdout
+                X_train_raw, X_holdout_raw = X_raw, X_raw.iloc[0:0]
                 y_train, y_holdout = y_values, y_values[0:0]
                 if holdout_ratio > 0.0:
                     self.logger.warning(
                         "pipeline.holdout_skipped",
                         reason="dataset_too_small",
-                        n_rows=len(X),
+                        n_rows=len(X_raw),
                         min_required=min_holdout_rows * 2,
                     )
             else:
                 time_column_name = getattr(dataset, "time_column", None)
 
                 if time_column_name and time_column_name in df.columns:
-                    # Temporal split: oldest rows for training, newest for holdout
                     time_vals = df[time_column_name]
                     sorted_indices = time_vals.argsort()
                     split_point = int(len(sorted_indices) * (1 - holdout_ratio))
                     train_indices = sorted_indices[:split_point]
                     holdout_indices = sorted_indices[split_point:]
-                    X_train = X.iloc[train_indices]
-                    X_holdout = X.iloc[holdout_indices]
+                    X_train_raw = X_raw.iloc[train_indices]
+                    X_holdout_raw = X_raw.iloc[holdout_indices]
                     y_train = y_values[train_indices]
                     y_holdout = y_values[holdout_indices]
                 else:
-                    # Random split
-                    X_train, X_holdout, y_train, y_holdout = train_test_split(
-                        X, y_values, test_size=holdout_ratio, random_state=42
+                    X_train_raw, X_holdout_raw, y_train, y_holdout = train_test_split(
+                        X_raw, y_values, test_size=holdout_ratio, random_state=42
                     )
 
                 self.logger.info(
                     "pipeline.holdout_split",
                     holdout_ratio=holdout_ratio,
-                    train_size=len(X_train),
-                    holdout_size=len(X_holdout),
+                    train_size=len(X_train_raw),
+                    holdout_size=len(X_holdout_raw),
                     temporal_split=bool(time_column_name and time_column_name in df.columns),
                 )
+
+            # X_train = raw features for detection/construction (original column names)
+            X_train = X_train_raw
+            X_holdout = X_holdout_raw
+
+            # ── Preprocess for model training only ───────────────────
+            col_types: dict[str, str] | None = None
+            if schema.get("columns"):
+                col_types = {
+                    c["name"]: c.get("detected_type", "numeric")
+                    for c in schema["columns"]
+                    if c["name"] in X_train_raw.columns
+                }
+
+            feature_columns = list(X_train_raw.columns)
+            preprocessor = DataPreprocessor()
+            try:
+                X_processed, _feature_names_out = preprocessor.fit_transform(
+                    X_train_raw, feature_columns, column_types=col_types
+                )
+                X_holdout_processed = preprocessor.transform(
+                    X_holdout_raw, feature_columns
+                ) if len(X_holdout_raw) > 0 else np.empty((0, X_processed.shape[1]))
+            except ValueError as prep_err:
+                self.logger.warning("pipeline.preprocessor_fallback", error=str(prep_err))
+                X_processed = X_train_raw.select_dtypes(include=[np.number]).fillna(
+                    X_train_raw.median(numeric_only=True)
+                ).to_numpy(dtype=np.float64)
+                X_holdout_processed = X_holdout_raw.select_dtypes(include=[np.number]).fillna(
+                    X_train_raw.median(numeric_only=True)
+                ).to_numpy(dtype=np.float64) if len(X_holdout_raw) > 0 else np.empty((0, X_processed.shape[1]))
 
             self.logger.info(
                 "pipeline.data_loaded",
@@ -536,10 +544,13 @@ class IVEPipeline:
             model_types = _parse_model_types(config)
             cv_folds: int = int(config.get("cv_folds", 5))
 
-            # Use training set only — holdout is reserved for validation
-            X_values = X_train.to_numpy(dtype=np.float64)
+            # Use PREPROCESSED training set for model fitting
+            # X_train remains raw (original columns) for detection/construction
+            X_values = X_processed  # numpy array from preprocessor
 
             all_residuals: list[dict[str, Any]] = []
+
+            cv_results_by_model: dict[str, Any] = {}  # Fix 3: track per-model cv_result
 
             _record_event(
                 experiment_id,
@@ -558,6 +569,7 @@ class IVEPipeline:
 
                 cv = CrossValidator(model_instance, n_splits=cv_folds, stratified=stratified)
                 cv_result = cv.fit(X_values, y_train)
+                cv_results_by_model[model_type] = cv_result
 
                 oof_preds = cv_result.oof_predictions
                 oof_resid = cv_result.oof_residuals  # y - oof_preds
@@ -640,24 +652,29 @@ class IVEPipeline:
 
             shap_interaction_pairs: list[tuple[str, str, float]] = []
 
-            if cv_result.fitted_models:
+            # Prefer XGBoost for SHAP (TreeExplainer is exact); fall back to linear
+            shap_cv = cv_results_by_model.get("xgboost") or cv_results_by_model.get("linear")
+            if shap_cv and shap_cv.fitted_models:
                 try:
                     shap_analyzer = SHAPInteractionAnalyzer(sample_size=500)
                     feature_names = list(X_train.columns)
                     shap_result = shap_analyzer.compute(
-                        cv_result.fitted_models[-1],  # last fold's model
+                        shap_cv.fitted_models[-1],  # last fold's model
                         X_values,
                         feature_names,
-                        compute_interactions=True,
+                        compute_interactions=("xgboost" in cv_results_by_model),
                     )
                     shap_interaction_pairs = shap_result.top_interaction_pairs
                     self.logger.info(
                         "pipeline.shap_done",
+                        model_used=("xgboost" if "xgboost" in cv_results_by_model else "linear"),
                         n_interaction_pairs=len(shap_interaction_pairs),
                         top_pair=shap_interaction_pairs[0] if shap_interaction_pairs else None,
                     )
                 except Exception as shap_err:
                     self.logger.warning("pipeline.shap_failed", error=str(shap_err))
+            else:
+                self.logger.info("pipeline.shap_skipped", reason="no_fitted_models")
 
             await exp_repo.update_progress(experiment_id, 55, "detect")
 
@@ -815,7 +832,9 @@ class IVEPipeline:
             if time_col_name and time_col_name in df.columns:
                 try:
                     temporal = TemporalAnalyzer(n_bins=5)
-                    temporal_patterns = temporal.analyze(df, residuals, [time_col_name])
+                    # Pass training-subset of df (must align with residuals length)
+                    df_train = df.loc[X_train.index] if hasattr(X_train, "index") else df.iloc[:len(residuals)]
+                    temporal_patterns = temporal.analyze(df_train, residuals, [time_col_name])
                     for tp in temporal_patterns:
                         all_patterns.append({
                             "pattern_type": "temporal",
@@ -871,6 +890,10 @@ class IVEPipeline:
 
             # ── Score and rank patterns ───────────────────────────────
             if all_patterns:
+                # PatternScorer re-computes effect sizes against PRIMARY model's
+                # residuals. For ensemble patterns from other models, this tests
+                # whether the pattern's signal persists in the primary model —
+                # which is the cross-model validation signal.
                 scorer = PatternScorer()
                 scored = scorer.score_and_rank(all_patterns, residuals, top_k=20)
                 if scored:
@@ -1170,7 +1193,7 @@ class IVEPipeline:
                 baseline_model = XGBoostIVEModel()
                 try:
                     baseline_model.fit(X_values, y_train)
-                    baseline_preds = baseline_model.predict(X_holdout.to_numpy(dtype=np.float64))
+                    baseline_preds = baseline_model.predict(X_holdout_processed)
 
                     if is_classification and roc_auc_score:
                         baseline_metric = float(roc_auc_score(y_holdout, baseline_preds))
@@ -1218,7 +1241,7 @@ class IVEPipeline:
                                     [X_values] + [s.reshape(-1, 1) for s in aug_cols_train]
                                 )
                                 X_aug_holdout = np.column_stack(
-                                    [X_holdout.to_numpy(dtype=np.float64)]
+                                    [X_holdout_processed]
                                     + [s.reshape(-1, 1) for s in aug_cols_holdout]
                                 )
 

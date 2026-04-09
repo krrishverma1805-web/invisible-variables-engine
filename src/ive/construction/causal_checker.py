@@ -19,19 +19,17 @@ import numpy as np
 import pandas as pd
 import structlog
 
-from ive.core.pipeline import LatentVariableCandidate
-
 log = structlog.get_logger(__name__)
 
 
-def _get_attr(candidate: LatentVariableCandidate | dict[str, Any], key: str, default: Any = None) -> Any:
+def _get_attr(candidate: dict[str, Any], key: str, default: Any = None) -> Any:
     """Safely get an attribute from a candidate (dict or dataclass)."""
     if isinstance(candidate, dict):
         return candidate.get(key, default)
     return getattr(candidate, key, default)
 
 
-def _get_construction_rule(candidate: LatentVariableCandidate | dict[str, Any]) -> dict[str, Any]:
+def _get_construction_rule(candidate: dict[str, Any]) -> dict[str, Any]:
     """Extract construction_rule from a candidate, handling both dict and dataclass."""
     rule = _get_attr(candidate, "construction_rule", {})
     if isinstance(rule, dict):
@@ -41,7 +39,7 @@ def _get_construction_rule(candidate: LatentVariableCandidate | dict[str, Any]) 
 
 class CausalChecker:
     """
-    Heuristic causal plausibility filter for LatentVariableCandidate objects.
+    Heuristic causal plausibility filter for dict[str, Any] objects.
 
     Operates as a filter -- candidates failing causal checks are assigned
     a reduced confidence_score with a warning, not silently discarded.
@@ -49,15 +47,15 @@ class CausalChecker:
 
     def filter(
         self,
-        candidates: list[LatentVariableCandidate],
+        candidates: list[dict[str, Any]],
         df: object,  # pd.DataFrame
         target_column: str | None = None,
-    ) -> list[LatentVariableCandidate]:
+    ) -> list[dict[str, Any]]:
         """
         Apply causal plausibility checks to all candidates.
 
         Args:
-            candidates: List of LatentVariableCandidate objects from Phase 4.
+            candidates: List of dict[str, Any] objects from Phase 4.
             df: The original DataFrame for correlation and ordering checks.
             target_column: Name of the target column for reverse-causality check.
 
@@ -134,7 +132,7 @@ class CausalChecker:
 
     def _is_reverse_causal(
         self,
-        candidate: LatentVariableCandidate,
+        candidate: dict[str, Any],
         df: object,
         target_column: str,
     ) -> bool:
@@ -211,7 +209,7 @@ class CausalChecker:
 
     def _is_confounding_proxy(
         self,
-        candidate: LatentVariableCandidate,
+        candidate: dict[str, Any],
         df: object,
         all_feature_columns: list[str],
     ) -> bool:

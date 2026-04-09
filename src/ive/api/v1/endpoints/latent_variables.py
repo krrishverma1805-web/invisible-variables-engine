@@ -178,11 +178,42 @@ async def apply_latent_variables(
             },
         )
 
+    # Validate that required columns exist in uploaded CSV
+    missing_columns: set[str] = set()
+    for lv in validated_lvs:
+        rule = lv.construction_rule or {}
+        # Collect required column names from construction rules
+        if "column_name" in rule:
+            missing_columns.add(rule["column_name"])
+        if "feature_a" in rule:
+            missing_columns.add(rule["feature_a"])
+        if "feature_b" in rule:
+            missing_columns.add(rule["feature_b"])
+
+    # Filter to actually missing ones
+    missing_columns = {c for c in missing_columns if c not in df.columns}
+    if missing_columns:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": {
+                    "code": "SCHEMA_MISMATCH",
+                    "message": f"Uploaded CSV is missing columns required by construction rules: {sorted(missing_columns)}",
+                }
+            },
+        )
+
     # Apply each construction rule
     columns_added: list[dict[str, Any]] = []
     for lv in validated_lvs:
         rule = lv.construction_rule or {}
-        pattern_type = rule.get("type", "subgroup")
+        # Infer pattern type from rule keys
+        if rule.get("type") == "interaction" or ("feature_a" in rule and "feature_b" in rule):
+            pattern_type = "interaction"
+        elif "cluster_id" in rule or "cluster_center" in rule:
+            pattern_type = "cluster"
+        else:
+            pattern_type = "subgroup"  # default for subgroup patterns
 
         try:
             scores = apply_construction_rule(rule, pattern_type, df)

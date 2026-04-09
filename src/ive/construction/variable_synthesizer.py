@@ -385,7 +385,8 @@ class VariableSynthesizer:
         scores = X[feat_a].values * X[feat_b].values
         # Normalize to [0, 1] range
         s_min, s_max = scores.min(), scores.max()
-        if s_max - s_min > 0:
+        has_range = (s_max - s_min) > 0
+        if has_range:
             scores = (scores - s_min) / (s_max - s_min)
         else:
             scores = np.zeros_like(scores, dtype=np.float64)
@@ -397,7 +398,7 @@ class VariableSynthesizer:
                 "type": "interaction",
                 "feature_a": feat_a,
                 "feature_b": feat_b,
-                "normalize": True,
+                "normalize": has_range,  # False when range is zero
                 "original_min": float(s_min),
                 "original_max": float(s_max),
             },
