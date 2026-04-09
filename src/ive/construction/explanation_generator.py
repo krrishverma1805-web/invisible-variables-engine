@@ -557,104 +557,310 @@ class ExplanationGenerator:
         n_features: int = 0,
         baseline_metric: float | None = None,
         best_improvement: float | None = None,
+        status: str = "completed",
     ) -> dict[str, Any]:
-        """Generate an executive-level experiment summary.
-
-        Args:
-            patterns:         Pattern dicts from Phase 3.
-            candidates:       Validated/rejected candidate dicts from Phase 4.
-            dataset_name:     Human-readable dataset name.
-            target_column:    Name of the prediction target.
-            analysis_mode:    ``"demo"`` or ``"production"``.
-            n_rows:           Number of rows in the analysed dataset.
-            n_features:       Number of features in the analysed dataset.
-            baseline_metric:  Baseline model metric before hidden variables.
-            best_improvement: Best improvement percentage from any candidate.
-
-        Returns:
-            Summary dict with headline, counts, narrative, top findings,
-            recommendations, analysis_mode, and threshold_profile.
-        """
+        """Generate a smart, narrative executive summary."""
         n_patterns = len(patterns)
         validated = [c for c in candidates if c.get("status") == "validated"]
         rejected = [c for c in candidates if c.get("status") == "rejected"]
         n_val = len(validated)
         n_rej = len(rejected)
 
-        mode_label = "Demo" if analysis_mode == "demo" else "Production"
         threshold_profile = (
             "Permissive (Demo)" if analysis_mode == "demo" else "Strict (Production)"
         )
+        target_readable = _humanise_col(target_column)
 
-        # Headline
-        if n_val > 0:
+        # ── Rank validated LVs by impact ─────────────────────────────
+        def _lv_sort_key(lv: dict[str, Any]) -> tuple[float, float, float]:
+            imp = lv.get("model_improvement_pct", {})
+            imp_pct = imp.get("improvement_pct", 0.0) if isinstance(imp, dict) else 0.0
+            effect = abs(lv.get("effect_size", 0.0))
+            stability = lv.get("stability_score", 0.0)
+            return (-imp_pct, -effect, -stability)
+
+        ranked_validated = sorted(validated, key=_lv_sort_key)
+        top_lv = ranked_validated[0] if ranked_validated else None
+
+        # Get top LV details
+        top_lv_imp = None
+        if top_lv:
+            imp_data = top_lv.get("model_improvement_pct", {})
+            if isinstance(imp_data, dict):
+                top_lv_imp = imp_data.get("improvement_pct")
+
+        # Pattern type breakdown
+        n_subgroup = sum(1 for p in patterns if p.get("pattern_type") == "subgroup")
+        n_cluster = sum(1 for p in patterns if p.get("pattern_type") == "cluster")
+        n_interaction = sum(1 for p in patterns if p.get("pattern_type") == "interaction")
+        n_temporal = sum(1 for p in patterns if p.get("pattern_type") == "temporal")
+
+        # ── HEADLINE ─────────────────────────────────────────────────
+        if status not in ("completed",):
+            headline = f"Analysis of {dataset_name} was {status}"
+        elif n_val > 0 and best_improvement and best_improvement > 1:
             headline = (
-                f"{n_val} hidden variable{'s' if n_val != 1 else ''} discovered "
-                f"in {dataset_name}"
+                f"{_number_word(n_val).capitalize()} hidden "
+                f"{'factor' if n_val == 1 else 'factors'} "
+                f"{'explains' if n_val == 1 else 'explain'} "
+                f"{best_improvement:.1f}% of prediction error in {target_readable}"
+            )
+        elif n_val > 0:
+            headline = (
+                f"{_number_word(n_val).capitalize()} hidden "
+                f"{'variable' if n_val == 1 else 'variables'} "
+                f"discovered in {dataset_name}"
             )
         elif n_patterns > 0:
             headline = (
-                f"Patterns detected in {dataset_name} but none passed " f"stability validation"
+                f"Patterns detected in {dataset_name} but none confirmed as stable"
             )
         else:
             headline = f"No hidden variables detected in {dataset_name}"
 
-        # Summary text
-        summary_parts: list[str] = []
+        # ── PARAGRAPH 1: THE HOOK ────────────────────────────────────
+        para1_parts: list[str] = []
 
-        if n_rows and n_features:
-            summary_parts.append(
-                f"The Invisible Variables Engine analyzed {n_rows:,} records "
-                f"across {n_features} features in the {dataset_name} dataset "
-                f"to predict {_humanise_col(target_column)} "
-                f"using {mode_label} mode thresholds. "
+        if status not in ("completed",):
+            para1_parts.append(
+                f"The analysis of {dataset_name} was {status}. "
+                "Partial results may be available but should be interpreted with caution."
+            )
+        elif n_val > 0 and top_lv_imp and top_lv_imp > 1:
+            # Strong findings
+            segment = _humanise_segment(top_lv) if top_lv else "a specific data segment"
+            para1_parts.append(
+                f"Analysis of {dataset_name} revealed "
+                f"{_number_word(n_val)} previously undetected "
+                f"{'factor' if n_val == 1 else 'factors'} affecting "
+                f"{target_readable} predictions. "
+                f"The most impactful — linked to {segment} — "
+                f"accounts for a {top_lv_imp:.1f}% improvement in prediction "
+                f"accuracy when included as a model feature."
+            )
+        elif n_val > 0:
+            # Moderate findings
+            para1_parts.append(
+                f"The analysis uncovered {_number_word(n_val)} systematic "
+                f"error {'pattern' if n_val == 1 else 'patterns'} in "
+                f"{target_readable} predictions"
+            )
+            if n_rows:
+                para1_parts.append(f" across {n_rows:,} records")
+            para1_parts.append(
+                ", though their individual impact on model performance "
+                "is modest."
+            )
+        elif n_patterns > 0:
+            # Patterns but none validated
+            para1_parts.append(
+                f"The analysis detected {_number_word(n_patterns)} statistical "
+                f"{'anomaly' if n_patterns == 1 else 'anomalies'} in prediction "
+                f"errors for {target_readable}, but none survived bootstrap "
+                f"stability testing — they are likely noise artifacts rather "
+                f"than genuine hidden factors."
             )
         else:
-            summary_parts.append(
-                f"The Invisible Variables Engine analyzed the {dataset_name} dataset "
-                f"to predict {_humanise_col(target_column)} "
-                f"using {mode_label} mode thresholds. "
+            # No findings
+            row_phrase = f" of {n_rows:,} records" if n_rows else ""
+            para1_parts.append(
+                f"After rigorous analysis{row_phrase}, no stable hidden "
+                f"variables were identified in {dataset_name}. "
+                f"The existing feature set appears to adequately capture "
+                f"the main drivers of {target_readable}."
             )
 
-        if n_patterns == 0:
-            summary_parts.append(
-                "No statistically significant patterns were found in the "
-                "model's prediction errors. The current feature set appears "
-                "to capture the key drivers of the target variable."
+        # ── PARAGRAPH 2: THE EVIDENCE (only if validated LVs) ────────
+        para2_parts: list[str] = []
+
+        if ranked_validated:
+            top = ranked_validated[0]
+            segment = _humanise_segment(top)
+            effect = abs(top.get("effect_size", 0.0))
+            p_val = top.get("p_value", 1.0)
+            presence = top.get("bootstrap_presence_rate", 0.0)
+            holdout = top.get("holdout_validated")
+
+            para2_parts.append(
+                f"The primary discovery involves {segment}."
+            )
+
+            if effect > 0:
+                para2_parts.append(
+                    f" In this segment, prediction errors show a "
+                    f"{'large' if effect >= 0.8 else 'medium' if effect >= 0.5 else 'small'} "
+                    f"deviation from the norm (effect size: {effect:.2f}"
+                )
+                if p_val < 0.05:
+                    para2_parts.append(f", p {'< 0.001' if p_val < 0.001 else f'= {p_val:.3f}'}")
+                para2_parts.append(").")
+
+            if presence > 0:
+                para2_parts.append(
+                    f" This pattern was confirmed across {int(presence * 100)}% of "
+                    f"bootstrap resamples"
+                )
+                if holdout is True:
+                    para2_parts.append(" and validated on held-out data")
+                para2_parts.append(".")
+
+            # Additional LVs
+            if len(ranked_validated) > 1:
+                for extra_lv in ranked_validated[1:3]:  # top 3 only
+                    extra_seg = _humanise_segment(extra_lv)
+                    extra_imp = extra_lv.get("model_improvement_pct", {})
+                    extra_pct = extra_imp.get("improvement_pct", 0) if isinstance(extra_imp, dict) else 0
+                    if extra_pct > 0:
+                        para2_parts.append(
+                            f" A secondary factor linked to {extra_seg} was also "
+                            f"identified, contributing an additional {extra_pct:.1f}% improvement."
+                        )
+                    else:
+                        para2_parts.append(
+                            f" Another factor linked to {extra_seg} was also confirmed as stable."
+                        )
+
+        # ── PARAGRAPH 3: THE IMPACT (only if retraining data) ────────
+        para3_parts: list[str] = []
+
+        if best_improvement and best_improvement > 0 and baseline_metric is not None:
+            # Determine total improvement
+            total_imp = best_improvement
+            for v in ranked_validated:
+                imp_d = v.get("model_improvement_pct", {})
+                if isinstance(imp_d, dict) and imp_d.get("improvement_pct"):
+                    total_imp = max(total_imp, imp_d.get("improvement_pct", 0))
+
+            # Metric name
+            metric_label = "prediction accuracy"
+            if top_lv:
+                imp_d2 = top_lv.get("model_improvement_pct", {})
+                if isinstance(imp_d2, dict):
+                    m = imp_d2.get("metric", "r2")
+                    if m == "auc":
+                        metric_label = "classification performance"
+                    elif m == "rmse":
+                        metric_label = "prediction precision"
+
+            # Magnitude interpretation
+            if total_imp > 5:
+                magnitude_phrase = "a meaningful improvement that could noticeably reduce prediction errors in production"
+            elif total_imp > 1:
+                magnitude_phrase = "a moderate improvement — useful for marginal gains in model performance"
+            else:
+                magnitude_phrase = "a small but measurable improvement"
+
+            # Dataset size context
+            if n_rows > 10000:
+                size_phrase = " At this data scale, even small improvements translate to significant operational impact."
+            elif n_rows > 0 and n_rows < 500:
+                size_phrase = " Given the relatively small dataset, validation on larger data is recommended before production deployment."
+            else:
+                size_phrase = ""
+
+            # Primary pattern type context
+            dominant_type = "subgroup"
+            if n_interaction > n_subgroup and n_interaction > n_cluster:
+                dominant_type = "interaction"
+            elif n_cluster > n_subgroup:
+                dominant_type = "cluster"
+
+            type_phrases = {
+                "subgroup": "driven by a specific data segment",
+                "cluster": "linked to a combination of feature values",
+                "interaction": "emerging from feature interactions the original model missed",
+            }
+            type_phrase = type_phrases.get(dominant_type, "")
+
+            para3_parts.append(
+                f"Collectively, incorporating these hidden variables improves "
+                f"{metric_label} by +{total_imp:.1f}% — "
+                f"{magnitude_phrase}, {type_phrase}.{size_phrase}"
+            )
+
+        # ── PARAGRAPH 4: NEXT STEPS (always present) ─────────────────
+        next_steps: list[str] = []
+        what_this_means = ""
+
+        if n_val > 0:
+            next_steps.append(
+                "Add the discovered variables as features in your production model"
+            )
+            if top_lv:
+                seg = _humanise_segment(top_lv)
+                next_steps.append(
+                    f"Investigate the underlying cause — what drives the pattern in {seg}?"
+                )
+            next_steps.append(
+                "Monitor for drift: re-run periodically to verify findings remain stable as data evolves"
+            )
+            what_this_means = (
+                "These findings suggest your model is systematically missing information "
+                "that, once captured, improves predictions. The hidden variables likely "
+                "correspond to real-world conditions not currently recorded in your data."
+            )
+        elif n_patterns > 0:
+            next_steps.append(
+                "Consider re-running with a larger dataset for more statistical power"
+            )
+            next_steps.append(
+                "Try Production mode for stricter validation thresholds"
+            )
+            what_this_means = (
+                "While patterns were detected, they were not stable enough to be considered "
+                "reliable hidden variables. This could mean the patterns are noise, or the "
+                "dataset is too small to confirm them confidently."
             )
         else:
-            summary_parts.append(
-                f"The analysis identified {n_patterns} statistically significant "
-                f"pattern{'s' if n_patterns != 1 else ''} in the model's "
-                f"prediction errors. "
+            next_steps.append(
+                "No immediate action required — the current model appears well-specified"
             )
-            if n_val > 0:
-                summary_parts.append(
-                    f"Of these, {n_val} {'were' if n_val != 1 else 'was'} "
-                    f"confirmed as stable through bootstrap validation, "
-                    f"suggesting {'they represent' if n_val != 1 else 'it represents'} "
-                    f"genuine hidden variable{'s' if n_val != 1 else ''}. "
-                )
-            if n_rej > 0:
-                summary_parts.append(
-                    f"{n_rej} candidate{'s' if n_rej != 1 else ''} "
-                    f"{'were' if n_rej != 1 else 'was'} "
-                    f"rejected as unstable or likely noise."
-                )
-
-        if best_improvement and best_improvement > 0:
-            summary_parts.append(
-                f" The best-performing hidden variable improved model accuracy by "
-                f"+{best_improvement:.1f}%. "
+            next_steps.append(
+                "Consider expanding the feature set if domain knowledge suggests unmeasured factors"
+            )
+            what_this_means = (
+                "The model's prediction errors appear randomly distributed with no systematic "
+                "patterns. This is a positive signal — it suggests the existing features "
+                "capture the main drivers of the target variable."
             )
 
-        summary_text = "".join(summary_parts)
+        # ── ASSEMBLE SUMMARY TEXT ────────────────────────────────────
+        paragraphs = []
+        if para1_parts:
+            paragraphs.append("".join(para1_parts))
+        if para2_parts:
+            paragraphs.append("".join(para2_parts))
+        if para3_parts:
+            paragraphs.append("".join(para3_parts))
 
-        # Top findings: one sentence per validated variable
-        top_findings = [self.generate_latent_variable_explanation(c) for c in validated]
+        summary_text = "\n\n".join(paragraphs)
 
-        # Recommendations
-        recommendations = [self.generate_business_recommendation(c) for c in validated]
+        # Key insight: one-sentence highlight
+        if top_lv and top_lv_imp and top_lv_imp > 0:
+            key_insight = (
+                f"The strongest hidden variable is linked to "
+                f"{_humanise_segment(top_lv)}, improving predictions by "
+                f"+{top_lv_imp:.1f}%."
+            )
+        elif top_lv:
+            key_insight = (
+                f"The most reliable finding involves "
+                f"{_humanise_segment(top_lv)}."
+            )
+        else:
+            key_insight = ""
+
+        # Top findings: ranked by impact
+        top_findings = [
+            self.generate_latent_variable_explanation(c)
+            for c in ranked_validated
+        ]
+
+        # Recommendations: ranked by actionability
+        recommendations = [
+            self.generate_business_recommendation(c)
+            for c in ranked_validated
+        ]
         if not recommendations and n_patterns == 0:
             recommendations.append(
                 "The model's errors appear randomly distributed. "
@@ -667,14 +873,23 @@ class ExplanationGenerator:
             "validated_variables": n_val,
             "rejected_variables": n_rej,
             "summary_text": summary_text,
+            "key_insight": key_insight,
             "top_findings": top_findings,
             "recommendations": recommendations,
+            "what_this_means": what_this_means,
+            "next_steps": next_steps,
             "analysis_mode": analysis_mode,
             "threshold_profile": threshold_profile,
             "n_rows": n_rows,
             "n_features": n_features,
             "baseline_metric": baseline_metric,
             "best_improvement": best_improvement,
+            "pattern_breakdown": {
+                "subgroup": n_subgroup,
+                "cluster": n_cluster,
+                "interaction": n_interaction,
+                "temporal": n_temporal,
+            },
         }
 
         log.info(
@@ -707,6 +922,51 @@ def _humanise_col(col_name: str) -> str:
         More readable version with underscores replaced by spaces.
     """
     return col_name.replace("_", " ")
+
+
+def _humanise_segment(candidate: dict[str, Any]) -> str:
+    """Build a human-readable description of what data segment a LV represents."""
+    ptype = candidate.get("pattern_type", "unknown")
+    rule = candidate.get("construction_rule", {})
+
+    if ptype == "subgroup":
+        col = rule.get("column", rule.get("column_name", ""))
+        val = rule.get("value", rule.get("bin_value", ""))
+        if col and val:
+            return f"records where {_humanise_col(col)} is in the {_humanise_bin(val)} range"
+        elif col:
+            return f"a segment of {_humanise_col(col)}"
+        return "a specific data segment"
+
+    if ptype == "interaction":
+        fa = rule.get("feature_a", "")
+        fb = rule.get("feature_b", "")
+        if fa and fb:
+            return f"the interaction between {_humanise_col(fa)} and {_humanise_col(fb)}"
+        return "a feature interaction"
+
+    if ptype == "cluster":
+        center = rule.get("center", {})
+        if center:
+            top = sorted(center.items(), key=lambda kv: abs(kv[1]), reverse=True)[:2]
+            desc = " and ".join(f"{_humanise_col(f)}" for f, _ in top)
+            return f"a cluster characterized by {desc}"
+        return "a cluster of similar high-error records"
+
+    if ptype == "temporal":
+        col = rule.get("column_name", candidate.get("column_name", ""))
+        if col:
+            return f"a time-dependent pattern in {_humanise_col(col)}"
+        return "a temporal pattern"
+
+    return "a detected pattern"
+
+
+def _number_word(n: int) -> str:
+    """Convert small integers to words for more natural prose."""
+    words = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five",
+             6: "six", 7: "seven", 8: "eight", 9: "nine", 10: "ten"}
+    return words.get(n, str(n))
 
 
 def _humanise_bin(bin_value: str) -> str:

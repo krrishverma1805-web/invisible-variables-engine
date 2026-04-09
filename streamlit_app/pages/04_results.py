@@ -228,17 +228,43 @@ if summary_data:
     summary_profile = summary_data.get("threshold_profile", threshold_profile)
     st.caption(f"**Mode:** {summary_mode.capitalize()}  |  **Profile:** {summary_profile}")
 
-    st.markdown(f"**{summary_data.get('headline', '')}**")
-    st.markdown(summary_data.get("summary_text", ""))
+    # Headline
+    st.markdown(f"### {summary_data.get('headline', '')}")
 
+    # Key insight (if available)
+    key_insight = summary_data.get("key_insight", "")
+    if key_insight:
+        st.info(key_insight, icon=":material/lightbulb:")
+
+    # Narrative summary (multi-paragraph)
+    summary_text = summary_data.get("summary_text", "")
+    if summary_text:
+        for paragraph in summary_text.split("\n\n"):
+            if paragraph.strip():
+                st.markdown(paragraph.strip())
+
+    # What this means (contextual interpretation)
+    what_this_means = summary_data.get("what_this_means", "")
+    if what_this_means:
+        st.markdown(f"**What this means:** {what_this_means}")
+
+    # Top findings
     findings = summary_data.get("top_findings", [])
     if findings:
-        st.markdown("**Top Findings:**")
+        st.markdown("**Key Discoveries:**")
         for finding in findings:
             st.markdown(f"- {finding}")
 
+    # Next steps
+    next_steps = summary_data.get("next_steps", [])
+    if next_steps:
+        st.markdown("**Recommended Next Steps:**")
+        for i, step in enumerate(next_steps, 1):
+            st.markdown(f"{i}. {step}")
+
+    # Recommendations
     recommendations = summary_data.get("recommendations", [])
-    if recommendations:
+    if recommendations and not next_steps:
         st.markdown("**Recommendations:**")
         for rec in recommendations:
             st.markdown(f"- {rec}")
