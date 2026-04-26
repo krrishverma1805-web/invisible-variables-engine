@@ -40,7 +40,7 @@ def _is_exempt(path: str) -> bool:
     return any(path.startswith(prefix) for prefix in _EXEMPT_PREFIXES[1:])
 
 
-class APIKeyMiddleware(BaseHTTPMiddleware):
+class APIKeyMiddleware(BaseHTTPMiddleware):  # type: ignore[misc]
     """Starlette middleware that validates the ``X-API-Key`` header.
 
     On failure, returns HTTP 401 with a structured JSON error body.
@@ -119,4 +119,4 @@ async def require_api_key(request: Request) -> str:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or missing API key.",
         )
-    return api_key
+    return api_key  # type: ignore[return-value]

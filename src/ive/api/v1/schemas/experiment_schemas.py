@@ -26,7 +26,7 @@ AnalysisMode = Literal["demo", "production"]
 # ---------------------------------------------------------------------------
 
 
-class ExperimentConfig(BaseModel):
+class ExperimentConfig(BaseModel):  # type: ignore[misc]
     """Configuration for a single IVE experiment run."""
 
     model_types: list[str] = Field(
@@ -63,7 +63,7 @@ class ExperimentConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class ExperimentCreate(BaseModel):
+class ExperimentCreate(BaseModel):  # type: ignore[misc]
     """Request body for POST /experiments/."""
 
     dataset_id: UUID
@@ -86,7 +86,7 @@ ExperimentCreateRequest = ExperimentCreate
 # ---------------------------------------------------------------------------
 
 
-class ExperimentResponse(BaseModel):
+class ExperimentResponse(BaseModel):  # type: ignore[misc]
     """Full experiment detail — maps directly from the Experiment ORM model."""
 
     model_config = ConfigDict(from_attributes=True)
@@ -104,7 +104,7 @@ class ExperimentResponse(BaseModel):
     completed_at: datetime | None = None
 
 
-class ExperimentCreateResponse(BaseModel):
+class ExperimentCreateResponse(BaseModel):  # type: ignore[misc]
     """Minimal 201 Created response body."""
 
     id: UUID
@@ -113,7 +113,7 @@ class ExperimentCreateResponse(BaseModel):
     message: str
 
 
-class ExperimentListResponse(BaseModel):
+class ExperimentListResponse(BaseModel):  # type: ignore[misc]
     """Paginated experiment list."""
 
     experiments: list[ExperimentResponse]
@@ -122,7 +122,7 @@ class ExperimentListResponse(BaseModel):
     limit: int
 
 
-class ExperimentProgressResponse(BaseModel):
+class ExperimentProgressResponse(BaseModel):  # type: ignore[misc]
     """Lightweight progress-poll response for WebSocket/polling clients."""
 
     model_config = ConfigDict(from_attributes=True)
@@ -138,7 +138,7 @@ class ExperimentProgressResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class ErrorPatternResponse(BaseModel):
+class ErrorPatternResponse(BaseModel):  # type: ignore[misc]
     """A statistically significant pattern discovered in the residuals."""
 
     model_config = ConfigDict(from_attributes=True)
@@ -156,7 +156,7 @@ class ErrorPatternResponse(BaseModel):
     created_at: datetime
 
 
-class ExperimentSummaryResponse(BaseModel):
+class ExperimentSummaryResponse(BaseModel):  # type: ignore[misc]
     """Compact experiment summary — headline, counts, and recommendations."""
 
     headline: str
@@ -175,7 +175,7 @@ class ExperimentSummaryResponse(BaseModel):
     )
 
 
-class ExperimentFullReportResponse(BaseModel):
+class ExperimentFullReportResponse(BaseModel):  # type: ignore[misc]
     """Full experiment report bundling all result data."""
 
     experiment: dict[str, Any]
@@ -190,7 +190,7 @@ class ExperimentFullReportResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class ExperimentEventResponse(BaseModel):
+class ExperimentEventResponse(BaseModel):  # type: ignore[misc]
     """A single entry in the experiment audit / execution log.
 
     Mirrors the ``ExperimentEvent`` ORM model.  The ``payload`` field
@@ -208,7 +208,7 @@ class ExperimentEventResponse(BaseModel):
     created_at: datetime
 
 
-class ExperimentEventsListResponse(BaseModel):
+class ExperimentEventsListResponse(BaseModel):  # type: ignore[misc]
     """Chronological list of audit events for an experiment."""
 
     experiment_id: UUID

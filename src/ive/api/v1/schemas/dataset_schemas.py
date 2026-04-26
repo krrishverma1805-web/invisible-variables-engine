@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field
 # ---------------------------------------------------------------------------
 
 
-class ColumnInfo(BaseModel):
+class ColumnInfo(BaseModel):  # type: ignore[misc]
     """Compact per-column metadata returned in the dataset detail response."""
 
     name: str
@@ -36,7 +36,7 @@ class ColumnInfo(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class DatasetResponse(BaseModel):
+class DatasetResponse(BaseModel):  # type: ignore[misc]
     """Full dataset metadata returned by upload, detail, and list endpoints."""
 
     model_config = ConfigDict(from_attributes=True)
@@ -94,7 +94,7 @@ class DatasetResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class DatasetListResponse(BaseModel):
+class DatasetListResponse(BaseModel):  # type: ignore[misc]
     """Paginated list of datasets."""
 
     datasets: list[DatasetResponse]
@@ -108,7 +108,7 @@ class DatasetListResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class DatasetProfileResponse(BaseModel):
+class DatasetProfileResponse(BaseModel):  # type: ignore[misc]
     """Statistical profile returned by ``GET /datasets/{id}/profile``."""
 
     dataset_id: UUID
@@ -128,7 +128,7 @@ class DatasetProfileResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class DeleteResponse(BaseModel):
+class DeleteResponse(BaseModel):  # type: ignore[misc]
     """Acknowledgment returned after a successful delete."""
 
     message: str

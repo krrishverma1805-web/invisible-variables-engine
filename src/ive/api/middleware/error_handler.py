@@ -92,7 +92,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(
         request: Request, exc: RequestValidationError
-    ) -> JSONResponse:
+    ) -> JSONResponse:  # type: ignore[misc]
         """Handle Pydantic request validation errors (422)."""
         rid = _request_id(request)
         errors = exc.errors()
@@ -117,7 +117,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     # ── 2. Standard HTTP errors ────────────────────────────────────────────
 
     @app.exception_handler(StarletteHTTPException)
-    async def http_error_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+    async def http_error_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:  # type: ignore[misc]
         """Handle standard HTTP exceptions (4xx / 5xx)."""
         rid = _request_id(request)
         code_map = {
@@ -149,7 +149,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     # ── 3. DatasetValidationError ──────────────────────────────────────────
 
     @app.exception_handler(_get_dataset_validation_error())
-    async def dataset_validation_handler(request: Request, exc: Exception) -> JSONResponse:
+    async def dataset_validation_handler(request: Request, exc: Exception) -> JSONResponse:  # type: ignore[misc]
         """Return 422 with a list of dataset-specific validation errors."""
         rid = _request_id(request)
         errors = getattr(exc, "errors", [str(exc)])
@@ -165,7 +165,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     # ── 4. ValueError ──────────────────────────────────────────────────────
 
     @app.exception_handler(ValueError)
-    async def value_error_handler(request: Request, exc: ValueError) -> JSONResponse:
+    async def value_error_handler(request: Request, exc: ValueError) -> JSONResponse:  # type: ignore[misc]
         """Handle ValueError as 400 Bad Request."""
         rid = _request_id(request)
         log.warning("ive.value_error", error=str(exc), path=request.url.path, request_id=rid)
@@ -179,7 +179,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     # ── 5. FileNotFoundError ───────────────────────────────────────────────
 
     @app.exception_handler(FileNotFoundError)
-    async def file_not_found_handler(request: Request, exc: FileNotFoundError) -> JSONResponse:
+    async def file_not_found_handler(request: Request, exc: FileNotFoundError) -> JSONResponse:  # type: ignore[misc]
         """Handle FileNotFoundError as 404."""
         rid = _request_id(request)
         log.warning("ive.file_not_found", error=str(exc), path=request.url.path, request_id=rid)

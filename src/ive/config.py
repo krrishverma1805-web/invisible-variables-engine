@@ -56,7 +56,7 @@ class Environment(str, Enum):
 # ---------------------------------------------------------------------------
 
 
-class DatabaseSettings(BaseSettings):
+class DatabaseSettings(BaseSettings):  # type: ignore[misc]
     """PostgreSQL connection and pool configuration.
 
     The ``database_url`` must use the ``postgresql+asyncpg://`` driver scheme.
@@ -97,7 +97,7 @@ class DatabaseSettings(BaseSettings):
 
     @field_validator("database_url")
     @classmethod
-    def ensure_async_driver(cls, v: str) -> str:
+    def ensure_async_driver(cls, v: str) -> str:  # type: ignore[misc]
         """Auto-correct ``postgresql://`` → ``postgresql+asyncpg://``."""
         if not v.startswith("postgresql"):
             raise ValueError(f"DATABASE_URL must start with 'postgresql'; got '{v[:30]}...'")
@@ -106,7 +106,7 @@ class DatabaseSettings(BaseSettings):
         return v
 
 
-class RedisSettings(BaseSettings):
+class RedisSettings(BaseSettings):  # type: ignore[misc]
     """Redis connection configuration.
 
     Used for the Celery message broker, result backend, rate-limit counters,
@@ -125,7 +125,7 @@ class RedisSettings(BaseSettings):
     redis_db: int = Field(default=0, ge=0, le=15, description="Redis database number.")
 
 
-class CelerySettings(BaseSettings):
+class CelerySettings(BaseSettings):  # type: ignore[misc]
     """Celery worker and task configuration."""
 
     model_config = SettingsConfigDict(env_prefix="", extra="ignore")
@@ -152,7 +152,7 @@ class CelerySettings(BaseSettings):
     )
 
 
-class SecuritySettings(BaseSettings):
+class SecuritySettings(BaseSettings):  # type: ignore[misc]
     """Authentication, API keys, and rate-limiting configuration."""
 
     model_config = SettingsConfigDict(env_prefix="", extra="ignore")
@@ -194,7 +194,7 @@ class SecuritySettings(BaseSettings):
         return [k.strip() for k in self.valid_api_keys.split(",") if k.strip()]
 
 
-class MLSettings(BaseSettings):
+class MLSettings(BaseSettings):  # type: ignore[misc]
     """Machine-learning pipeline default hyperparameters and limits.
 
     All values can be overridden per-experiment via the ``ExperimentConfig``
@@ -237,7 +237,7 @@ class MLSettings(BaseSettings):
     )
 
 
-class DetectionSettings(BaseSettings):
+class DetectionSettings(BaseSettings):  # type: ignore[misc]
     """Detection and validation calibration parameters.
 
     These settings control the sensitivity of the subgroup discovery and
@@ -285,7 +285,7 @@ class DetectionSettings(BaseSettings):
         return self.demo_stability_threshold if self.demo_mode else self.default_stability_threshold
 
 
-class StorageSettings(BaseSettings):
+class StorageSettings(BaseSettings):  # type: ignore[misc]
     """Artifact storage configuration (local filesystem or S3)."""
 
     model_config = SettingsConfigDict(env_prefix="", extra="ignore")
@@ -452,7 +452,7 @@ class Settings(
     # ── Lifecycle validators ─────────────────────────────────────────────────
 
     @model_validator(mode="after")
-    def _validate_production_settings(self) -> Settings:
+    def _validate_production_settings(self) -> Settings:  # type: ignore[misc]
         """Enforce stricter rules when ``ENV=production``.
 
         Raises:

@@ -14,7 +14,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 
 
-class LatentVariableResponse(BaseModel):
+class LatentVariableResponse(BaseModel):  # type: ignore[misc]
     """Single latent variable — maps directly from ``LatentVariable`` ORM model."""
 
     model_config = ConfigDict(from_attributes=True)
@@ -32,7 +32,7 @@ class LatentVariableResponse(BaseModel):
     created_at: datetime
 
 
-class LatentVariableListResponse(BaseModel):
+class LatentVariableListResponse(BaseModel):  # type: ignore[misc]
     """Paginated list of latent variables."""
 
     variables: list[LatentVariableResponse]

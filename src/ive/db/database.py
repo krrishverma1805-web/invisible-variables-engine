@@ -45,7 +45,7 @@ NAMING_CONVENTION: dict[str, str] = {
 }
 
 
-class Base(DeclarativeBase):
+class Base(DeclarativeBase):  # type: ignore[misc]
     """Declarative base for all IVE ORM models.
 
     All model classes in ``ive.db.models`` inherit from this base.
