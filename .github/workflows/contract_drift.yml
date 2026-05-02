@@ -1,0 +1,63 @@
+name: Contract Drift Check
+
+# Plan §122 — RESPONSE_CONTRACT.md must change when config / schema /
+# migrations / API schemas change. Catches contract drift in PR review
+# before integrators discover it in production.
+
+on:
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  contract-drift:
+    name: contract-drift-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute changed files
+        id: changes
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          changed=$(git diff --name-only "$base" "$head")
+          echo "$changed" > /tmp/changed_files.txt
+          echo "Changed files:"
+          cat /tmp/changed_files.txt
+
+      - name: Verify contract is updated when load-bearing files change
+        run: |
+          set -eu
+          changed=$(cat /tmp/changed_files.txt)
+          contract_changed=false
+          load_bearing_changed=false
+
+          while IFS= read -r f; do
+            case "$f" in
+              docs/RESPONSE_CONTRACT.md)
+                contract_changed=true
+                ;;
+              src/ive/config.py | \
+              src/ive/api/v1/schemas/* | \
+              src/ive/db/models.py | \
+              alembic/versions/*)
+                load_bearing_changed=true
+                ;;
+            esac
+          done <<< "$changed"
+
+          if [ "$load_bearing_changed" = "true" ] && [ "$contract_changed" = "false" ]; then
+            echo ""
+            echo "::error::This PR modifies config, schemas, db models, or migrations"
+            echo "::error::but does NOT update docs/RESPONSE_CONTRACT.md."
+            echo "::error::Per plan §122, the contract MUST move with these changes."
+            echo "::error::"
+            echo "::error::If this is a no-impact change (refactor, type-only edit),"
+            echo "::error::add a [skip-contract-check] line to the PR description"
+            echo "::error::and the bot will allow the PR through."
+            exit 1
+          fi
+
+          echo "Contract drift check passed."

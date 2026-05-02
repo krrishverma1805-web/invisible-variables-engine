@@ -35,6 +35,7 @@ settings = get_settings()
 # ---------------------------------------------------------------------------
 
 from celery import Celery  # noqa: E402  (imported after settings to avoid circular)
+from celery.schedules import crontab  # noqa: E402
 
 celery_app = Celery(
     "ive",
@@ -66,6 +67,20 @@ celery_app.conf.task_routes = {
     "ive.workers.tasks.profile_dataset": {"queue": "analysis"},
     "ive.workers.tasks.cancel_experiment": {"queue": "high_priority"},
     "ive.workers.tasks.health_check_task": {"queue": "default"},
+    "ive.workers.tasks.fpr_sentinel_run": {"queue": "default"},
+}
+
+# ---------------------------------------------------------------------------
+# Beat schedule (plan §C4 — nightly FPR sentinel)
+# ---------------------------------------------------------------------------
+
+celery_app.conf.beat_schedule = {
+    "fpr-sentinel-nightly": {
+        "task": "ive.workers.tasks.fpr_sentinel_run",
+        # 02:30 UTC: outside business hours, after most experiments finish.
+        "schedule": crontab(minute=30, hour=2),
+        "options": {"queue": "default", "expires": 3600},
+    },
 }
 
 # ---------------------------------------------------------------------------

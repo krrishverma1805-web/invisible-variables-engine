@@ -1,0 +1,101 @@
+name: Governance Checks
+
+# Plan §187 — CODEOWNERS consistency.
+# Plan §159 — demo-dataset hash manifest consistency.
+# Plan §180 — adversarial corpus minimum size.
+# Plan §164 — behavioral corpus minimum size.
+
+on:
+  pull_request:
+    branches: ["main"]
+  push:
+    branches: ["main"]
+
+jobs:
+  codeowners-consistency:
+    name: codeowners-consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Confirm CODEOWNERS lists all expected paths
+        run: |
+          set -eu
+          missing=0
+          # Paths required by plan §121 + §154.
+          required=(
+            "src/ive/llm/"
+            "src/ive/models/"
+            "src/ive/detection/"
+            "src/ive/construction/"
+            "alembic/"
+            "src/ive/db/"
+            "src/ive/api/"
+            "streamlit_app/"
+            "docs/RESPONSE_CONTRACT.md"
+            "src/ive/observability/"
+            "ops/"
+            "docs/runbooks/"
+            ".github/workflows/"
+            "Dockerfile"
+            "docker-compose.yml"
+            "pyproject.toml"
+            "src/ive/auth/"
+            "CODEOWNERS"
+            "docs/branch_protection.md"
+          )
+          for p in "${required[@]}"; do
+            if ! grep -F -- "$p" CODEOWNERS >/dev/null; then
+              echo "::error::CODEOWNERS missing required path: $p"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "::error::Update CODEOWNERS per docs/branch_protection.md + plan §121."
+            exit 1
+          fi
+          echo "CODEOWNERS includes all required paths."
+
+  corpus-min-size:
+    name: corpus-min-size
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Adversarial corpus minimum 20 cases
+        run: |
+          python -c "
+          import json
+          d = json.load(open('tests/llm/adversarial_corpus.json'))
+          assert len(d['cases']) >= 20, f'adversarial corpus too small: {len(d[\"cases\"])} < 20'
+          print(f'adversarial corpus: {len(d[\"cases\"])} cases')
+          "
+      - name: Behavioral corpus minimum 10 cases
+        run: |
+          python -c "
+          import json
+          d = json.load(open('tests/llm/behavioral_corpus.json'))
+          assert len(d['cases']) >= 10, f'behavioral corpus too small: {len(d[\"cases\"])} < 10'
+          print(f'behavioral corpus: {len(d[\"cases\"])} cases')
+          "
+
+  alert-rules-yaml:
+    name: alert-rules-parse
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pyyaml
+      - name: Parse + sanity-check alert rules
+        run: |
+          python -c "
+          import yaml, sys
+          d = yaml.safe_load(open('ops/prometheus/alerts.yaml'))
+          assert 'groups' in d, 'missing top-level groups key'
+          n = sum(len(g.get('rules', [])) for g in d['groups'])
+          assert n >= 4, f'expected ≥4 alert rules, got {n}'
+          print(f'alert rules: {n} across {len(d[\"groups\"])} groups')
+          "

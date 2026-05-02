@@ -32,7 +32,12 @@ from sklearn.metrics import (
     r2_score,
     roc_auc_score,
 )
-from sklearn.model_selection import KFold, StratifiedKFold
+from sklearn.model_selection import (
+    GroupKFold,
+    KFold,
+    StratifiedKFold,
+    TimeSeriesSplit,
+)
 
 from ive.models.base_model import IVEModel
 
@@ -100,6 +105,10 @@ class CrossValidator:
         n_splits: int = 5,
         seed: int = 42,
         stratified: bool = False,
+        cv_strategy: str = "auto",
+        time_index: np.ndarray[Any, Any] | None = None,
+        groups: np.ndarray[Any, Any] | None = None,
+        gap: int = 0,
     ) -> None:
         """Initialise the cross-validator.
 
@@ -108,13 +117,98 @@ class CrossValidator:
                        created for each fold so the original stays untouched.
             n_splits:  Number of CV folds (default 5).
             seed:      Random seed for fold assignment reproducibility.
-            stratified: ``True`` → ``StratifiedKFold`` (classification);
-                        ``False`` → ``KFold`` (regression).
+            stratified: **Deprecated** — use ``cv_strategy='stratified'`` instead.
+                        Kept for one release for backward compat. When
+                        ``cv_strategy='auto'`` and ``stratified=True``, the
+                        constructor coerces to ``cv_strategy='stratified'``.
+            cv_strategy: One of ``'auto' | 'kfold' | 'stratified' | 'timeseries' | 'group'``.
+                         ``'auto'`` defers to ``_resolve_strategy()`` at fit time:
+                         classification target → ``stratified``, ``time_index``
+                         provided → ``timeseries``, ``groups`` provided →
+                         ``group``, otherwise ``kfold``.  See plan §B2.
+            time_index:  Per-row timestamp ranks (or any monotonic index) used
+                         by ``TimeSeriesSplit``.  Must be passed when
+                         ``cv_strategy='timeseries'`` or when auto-detection
+                         should select that strategy.
+            groups:      Per-row group labels used by ``GroupKFold``.  Required
+                         when ``cv_strategy='group'``.
+            gap:         Number of samples to drop between train and validation
+                         in ``TimeSeriesSplit`` (purged-CV gap for forecasting
+                         with autoregressive features). Default 0 — bump to at
+                         least the max lag length when the dataset has lagged
+                         features (per plan §27).
         """
         self.model = model
         self.n_splits = n_splits
         self.seed = seed
-        self.stratified = stratified
+        # Backward-compat shim: stratified=True with auto strategy → stratified.
+        if cv_strategy == "auto" and stratified:
+            cv_strategy = "stratified"
+        self.stratified = stratified  # Retained for legacy logging + scoring branches.
+        self.cv_strategy = cv_strategy
+        self.time_index = time_index
+        self.groups = groups
+        self.gap = gap
+
+    def _resolve_strategy(
+        self,
+        X: np.ndarray[Any, Any],
+        y: np.ndarray[Any, Any],
+    ) -> str:
+        """Pick a CV strategy when ``cv_strategy='auto'``.
+
+        Priority (per plan §B2):
+            1. ``time_index`` is provided → ``'timeseries'``.
+            2. ``groups`` is provided → ``'group'``.
+            3. Target looks like binary/multiclass classification (per
+               cardinality + dtype heuristic) → ``'stratified'``.
+            4. Fallback → ``'kfold'``.
+        """
+        if self.cv_strategy != "auto":
+            return self.cv_strategy
+        if self.time_index is not None:
+            return "timeseries"
+        if self.groups is not None:
+            return "group"
+        # Classification heuristic — conservative per plan §B5: only when
+        # all of (integer/bool dtype, nunique<=10, n/nunique>=30) hold.
+        if y.dtype.kind in {"b", "i", "u"} and len(y) > 0:
+            nunique = int(np.unique(y).shape[0])
+            if 1 < nunique <= 10 and len(y) / nunique >= 30:
+                return "stratified"
+        return "kfold"
+
+    def _build_splitter(
+        self,
+        X: np.ndarray[Any, Any],
+        y: np.ndarray[Any, Any],
+    ) -> Any:
+        """Construct the sklearn splitter for the resolved strategy."""
+        strategy = self._resolve_strategy(X, y)
+        if strategy == "stratified":
+            return StratifiedKFold(
+                n_splits=self.n_splits,
+                shuffle=True,
+                random_state=self.seed,
+            )
+        if strategy == "timeseries":
+            if self.time_index is None:
+                # Auto-resolved to timeseries without an index — fall back
+                # to row order, which is the same thing modulo type.
+                pass
+            return TimeSeriesSplit(n_splits=self.n_splits, gap=self.gap)
+        if strategy == "group":
+            if self.groups is None:
+                raise ValueError(
+                    "cv_strategy='group' requires `groups` to be passed to CrossValidator()."
+                )
+            return GroupKFold(n_splits=self.n_splits)
+        # kfold
+        return KFold(
+            n_splits=self.n_splits,
+            shuffle=True,
+            random_state=self.seed,
+        )
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -155,18 +249,7 @@ class CrossValidator:
         )
 
         # ── Choose splitter ───────────────────────────────────────────
-        if self.stratified:
-            splitter: KFold | StratifiedKFold = StratifiedKFold(
-                n_splits=self.n_splits,
-                shuffle=True,
-                random_state=self.seed,
-            )
-        else:
-            splitter = KFold(
-                n_splits=self.n_splits,
-                shuffle=True,
-                random_state=self.seed,
-            )
+        splitter = self._build_splitter(X, y)
 
         # ── Accumulators ──────────────────────────────────────────────
         oof_predictions = np.full(n_samples, np.nan)
@@ -176,7 +259,23 @@ class CrossValidator:
         feature_importances: list[dict[str, float]] = []
 
         # ── Fold loop ─────────────────────────────────────────────────
-        for fold_idx, (train_idx, val_idx) in enumerate(splitter.split(X, y)):
+        # For TimeSeriesSplit, splitter expects rows in chronological order;
+        # we honor `time_index` by sorting once and remapping back at end.
+        strategy = self._resolve_strategy(X, y)
+        if strategy == "timeseries" and self.time_index is not None:
+            order = np.argsort(self.time_index, kind="stable")
+            X_sorted = X[order]
+            y_sorted = y[order]
+            split_iter = splitter.split(X_sorted, y_sorted)
+            split_pairs = [(order[tr], order[va]) for tr, va in split_iter]
+        elif strategy == "group" and self.groups is not None:
+            split_iter = splitter.split(X, y, groups=self.groups)
+            split_pairs = list(split_iter)
+        else:
+            split_iter = splitter.split(X, y)
+            split_pairs = list(split_iter)
+
+        for fold_idx, (train_idx, val_idx) in enumerate(split_pairs):
             X_train, X_val = X[train_idx], X[val_idx]
             y_train, y_val = y[train_idx], y[val_idx]
 

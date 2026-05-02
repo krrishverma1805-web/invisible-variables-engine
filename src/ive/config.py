@@ -180,6 +180,16 @@ class SecuritySettings(BaseSettings):  # type: ignore[misc]
         ge=1,
         description="Rate-limit sliding window in seconds.",
     )
+    rate_limit_feedback_per_hour: int = Field(
+        default=200,
+        ge=1,
+        description="Per-key feedback POST rate-limit ceiling (per plan §200).",
+    )
+    auth_audit_log_retention_days: int = Field(
+        default=30,
+        ge=1,
+        description="Retention window for auth_audit_log rows (operator beat task).",
+    )
 
     # -- Computed helpers -----------------------------------------------------
 
@@ -236,6 +246,72 @@ class MLSettings(BaseSettings):  # type: ignore[misc]
         description="Max rows passed to SHAP TreeExplainer (controls compute cost).",
     )
 
+    # ── Cross-validation strategy (Phase B2 / B5) ───────────────────────────
+    cv_strategy: Literal["auto", "kfold", "stratified", "timeseries", "group"] = Field(
+        default="auto",
+        description=(
+            "CV splitter strategy. 'auto' resolves at fit time: classification → "
+            "stratified, time_index → timeseries, groups → group, else kfold."
+        ),
+    )
+    cv_gap_size: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Purged-CV gap (samples) between train and validation in TimeSeriesSplit. "
+            "Set ≥ max_lag when the dataset has lagged autoregressive features."
+        ),
+    )
+
+    # ── Hyperparameter optimization (Phase B1) ──────────────────────────────
+    hpo_enabled: bool = Field(
+        default=False,
+        description=(
+            "Master toggle for Optuna-based HPO. Off by default — flips on once "
+            "calibration + benchmark show acceptable runtime impact."
+        ),
+    )
+    hpo_n_trials: int = Field(
+        default=30,
+        ge=1,
+        le=1000,
+        description="Maximum Optuna trials per (model_type, problem_type) pair.",
+    )
+    hpo_timeout_seconds: int = Field(
+        default=300,
+        ge=10,
+        description="Wall-clock cap on HPO runtime per model. On timeout, best-so-far wins.",
+    )
+    hpo_inner_cv_splits: int = Field(
+        default=3,
+        ge=2,
+        le=10,
+        description="Inner-CV fold count during HPO. Same strategy as outer (per plan §B1).",
+    )
+    hpo_study_seed: int | None = Field(
+        default=None,
+        description=(
+            "Optuna study seed. None → uses random_seed. Override only when comparing "
+            "two analyses with intentionally different HPO trajectories (per docs/RESPONSE_CONTRACT.md §1)."
+        ),
+    )
+
+    # ── Ensemble (Phase B3) ─────────────────────────────────────────────────
+    ensemble_enabled: bool = Field(
+        default=True,
+        description=(
+            "Build a stacked ensemble for Phase 5 uplift measurement. Detection "
+            "(Phase 3) always runs on canonical XGBoost residuals — the ensemble "
+            "is uplift-only per plan §95."
+        ),
+    )
+    ensemble_n_meta_splits: int = Field(
+        default=5,
+        ge=2,
+        le=10,
+        description="K-fold count for cross-fitted meta predictions.",
+    )
+
 
 class DetectionSettings(BaseSettings):  # type: ignore[misc]
     """Detection and validation calibration parameters.
@@ -283,6 +359,157 @@ class DetectionSettings(BaseSettings):  # type: ignore[misc]
     def effective_stability_threshold(self) -> float:
         """Return the stability threshold appropriate for the current mode."""
         return self.demo_stability_threshold if self.demo_mode else self.default_stability_threshold
+
+
+class LLMSettings(BaseSettings):  # type: ignore[misc]
+    """LLM (Groq / OpenAI-compatible) configuration for explanation enrichment.
+
+    The LLM enrichment layer is **off by default**.  When enabled, it post-
+    processes pipeline output to produce business-readable prose that cites
+    the same statistics the rule-based generator already produces.  Every
+    LLM output is validated against the input facts; any failure falls back
+    cleanly to the rule-based prose.
+
+    Self-hosted deployments can swap the Groq endpoint by setting
+    ``LLM_SELF_HOSTED_MODE=true`` and pointing ``GROQ_BASE_URL`` at a vLLM
+    or other OpenAI-compatible server.  See
+    ``docs/self_hosted_llm.md`` for the recommended stack.
+
+    Plan reference: §A1 (settings table), §91 (data egress), §107 (temp=0),
+    §103 (batched calls), §168 (token-budget guard).
+    """
+
+    model_config = SettingsConfigDict(env_prefix="", extra="ignore")
+
+    # ── Provider / model ─────────────────────────────────────────────────────
+    groq_api_key: SecretStr = Field(
+        default=SecretStr(""),
+        description="Groq API key (or any OpenAI-compatible provider when self-hosted).",
+    )
+    groq_model: str = Field(
+        default="llama-3.3-70b-versatile",
+        description="LLM model identifier; passed through to the provider as-is.",
+    )
+    groq_base_url: str = Field(
+        default="https://api.groq.com/openai/v1",
+        description="Provider base URL. Override for self-hosted (e.g. http://vllm:8000/v1).",
+    )
+    groq_timeout_seconds: float = Field(
+        default=15.0,
+        ge=1.0,
+        le=120.0,
+        description="HTTP timeout per LLM call.",
+    )
+    groq_max_retries: int = Field(
+        default=3,
+        ge=0,
+        le=10,
+        description="Max retries on transient errors (429/5xx/timeout). Honors Retry-After.",
+    )
+    groq_max_output_tokens: int = Field(
+        default=512,
+        ge=64,
+        le=4096,
+        description="Upper bound on output tokens; per-prompt overrides may be smaller.",
+    )
+    groq_temperature: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Sampling temperature. Default 0.0 for deterministic prose.",
+    )
+    groq_max_concurrency: int = Field(
+        default=2,
+        ge=1,
+        le=32,
+        description="Concurrent LLM calls per task. Default 2 (free-tier safe).",
+    )
+
+    # ── Feature flags ────────────────────────────────────────────────────────
+    llm_explanations_enabled: bool = Field(
+        default=False,
+        description="Master kill-switch for LLM enrichment. Default off until staging soak.",
+    )
+    llm_self_hosted_mode: bool = Field(
+        default=False,
+        description="When true, GROQ_BASE_URL points at a self-hosted OpenAI-compatible endpoint.",
+    )
+    llm_data_egress_default: Literal["allow", "deny"] = Field(
+        default="deny",
+        description="Default policy when no per-column metadata is set: deny is conservative.",
+    )
+
+    # ── Caching / budget / breaker ───────────────────────────────────────────
+    llm_cache_ttl_seconds: int = Field(
+        default=604_800,
+        ge=60,
+        description="Redis cache TTL in seconds (default 7 days).",
+    )
+    llm_redis_db: int = Field(
+        default=2,
+        ge=0,
+        le=15,
+        description="Redis DB index for the LLM response cache (broker=0, results=1).",
+    )
+    llm_prompt_version: str = Field(
+        default="v1",
+        description="Prompt suite version. Embedded in cache key — bump to invalidate.",
+    )
+    llm_circuit_breaker_threshold: int = Field(
+        default=5,
+        ge=1,
+        description="Consecutive transient failures before the circuit breaker opens.",
+    )
+    llm_circuit_breaker_cooldown_seconds: int = Field(
+        default=300,
+        ge=10,
+        description="How long the breaker stays open before half-open retry.",
+    )
+    llm_validation_retry_max: int = Field(
+        default=1,
+        ge=0,
+        le=3,
+        description="Max sharpened re-prompts after validation failure before fallback.",
+    )
+    llm_batch_size_lvs: int = Field(
+        default=8,
+        ge=1,
+        le=32,
+        description="Latent variables per batched Groq call.",
+    )
+    llm_batch_token_safety_threshold: int = Field(
+        default=8000,
+        ge=512,
+        description="Predicted prompt tokens above which a batch is split in half.",
+    )
+    llm_daily_token_budget: int = Field(
+        default=1_000_000,
+        ge=1000,
+        description="Daily total billable tokens before deployment-wide breaker opens.",
+    )
+    llm_per_experiment_token_cap: int = Field(
+        default=200_000,
+        ge=1000,
+        description="Per-experiment token cap. Predictive: skip calls projected to exceed.",
+    )
+
+    # ── Validator profile ────────────────────────────────────────────────────
+    llm_validator_profile: str = Field(
+        default="groq_llama_3_3_70b",
+        description="Validator profile name (banned phrases, tolerance, JSON-mode flag).",
+    )
+
+    # ── Computed helpers ─────────────────────────────────────────────────────
+
+    @property
+    def llm_redis_url(self) -> str:
+        """Redis DSN scoped to the LLM cache database index."""
+        # Built from the parent RedisSettings.redis_url at the Settings level.
+        # This sub-class doesn't have access to redis_url; the master Settings
+        # class exposes :meth:`build_redis_url(db=llm_redis_db)` instead.
+        raise NotImplementedError(
+            "Use Settings.build_redis_url(db=settings.llm_redis_db) at the master level."
+        )
 
 
 class StorageSettings(BaseSettings):  # type: ignore[misc]
@@ -340,6 +567,7 @@ class Settings(
     SecuritySettings,
     MLSettings,
     DetectionSettings,
+    LLMSettings,
     StorageSettings,
 ):
     """Master settings class for the Invisible Variables Engine.
@@ -404,6 +632,25 @@ class Settings(
         default=False,
         description="Enable Prometheus /metrics endpoint.",
     )
+    enable_tracing: bool = Field(
+        default=False,
+        description=(
+            "Enable OpenTelemetry tracing. Auto-instruments FastAPI, "
+            "httpx, asyncpg, sqlalchemy, and Celery when their respective "
+            "instrumentation packages are installed."
+        ),
+    )
+    otel_exporter_otlp_endpoint: str | None = Field(
+        default=None,
+        description=(
+            "OTLP collector endpoint (e.g. http://otel-collector:4318). "
+            "When None, traces are exported to stdout."
+        ),
+    )
+    otel_service_name: str = Field(
+        default="ive",
+        description="OTel `service.name` resource attribute.",
+    )
 
     # ── Computed properties ──────────────────────────────────────────────────
 
@@ -449,6 +696,12 @@ class Settings(
         base = self.redis_url.rsplit("/", 1)[0]
         return f"{base}/1"
 
+    @property
+    def llm_cache_redis_url(self) -> str:
+        """Redis URL for the LLM response cache (db index from LLMSettings)."""
+        base = self.redis_url.rsplit("/", 1)[0]
+        return f"{base}/{self.llm_redis_db}"
+
     # ── Lifecycle validators ─────────────────────────────────────────────────
 
     @model_validator(mode="after")
@@ -481,6 +734,15 @@ class Settings(
                     stacklevel=2,
                 )
                 logger.warning("DEBUG mode is enabled in production — this is not recommended")
+
+            # --- LLM enrichment requires a real API key in production ---
+            if self.llm_explanations_enabled:
+                key = self.groq_api_key.get_secret_value()
+                if not key:
+                    raise ValueError(
+                        "LLM_EXPLANATIONS_ENABLED=true in production requires a non-empty "
+                        "GROQ_API_KEY (or self-hosted endpoint credential)."
+                    )
 
         return self
 

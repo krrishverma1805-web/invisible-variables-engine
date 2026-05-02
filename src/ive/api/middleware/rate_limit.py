@@ -32,15 +32,19 @@ def _key_func(request: Request) -> str:
     """Identify the client for rate-limiting purposes.
 
     Priority:
-        1. ``X-API-Key`` header (per-key quotas)
-        2. Client IP address (anonymous requests)
+        1. Authenticated context (``request.state.auth.api_key_id`` or name) —
+           preferred so two requests with the same DB-managed key share a
+           bucket regardless of header casing.
+        2. Raw ``X-API-Key`` header (env-CSV legacy keys).
+        3. Client IP address (anonymous, e.g. health checks).
 
-    Args:
-        request: The incoming Starlette request.
-
-    Returns:
-        A string identifying the client.
+    Plan reference: §155 (per-key rate limit), §181 (auth tiers don't
+    accelerate global Groq concurrency — they do accelerate API quota).
     """
+    auth = getattr(request.state, "auth", None)
+    if auth is not None:
+        identifier = auth.api_key_id or auth.api_key_name
+        return f"key:{identifier}"
     settings = get_settings()
     api_key = request.headers.get(settings.api_key_header)
     if api_key:

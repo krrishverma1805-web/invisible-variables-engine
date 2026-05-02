@@ -44,7 +44,7 @@ from ive.api.v1.schemas.experiment_schemas import (
 )
 from ive.api.v1.schemas.latent_variable_schemas import (
     LatentVariableListResponse,
-    LatentVariableResponse,
+    serialize_lv,
 )
 from ive.db.models import Dataset, Experiment, LatentVariable
 from ive.db.repositories.dataset_repo import DatasetRepository
@@ -476,7 +476,7 @@ async def get_experiment_latent_variables(
     paged = all_vars[skip : skip + limit]
 
     return LatentVariableListResponse(
-        variables=[LatentVariableResponse.model_validate(v) for v in paged],
+        variables=[serialize_lv(v) for v in paged],
         total=len(all_vars),
         skip=skip,
         limit=limit,
@@ -612,7 +612,35 @@ async def get_experiment_summary(
         target_column=target_column,
     )
 
-    log.info("experiments.summary", experiment_id=str(experiment_id))
+    # ── LLM-prefer logic (per plan §A1) ────────────────────────────────────
+    # When experiment.llm_explanation_status == 'ready', surface the LLM
+    # headline + narrative; otherwise fall back to the rule-based summary.
+    raw_status = getattr(experiment, "llm_explanation_status", "pending") or "pending"
+    llm_headline = getattr(experiment, "llm_headline", None)
+    llm_narrative = getattr(experiment, "llm_narrative", None)
+    llm_recs = getattr(experiment, "llm_recommendations", None)
+
+    if raw_status == "ready" and llm_headline and llm_narrative:
+        summary["headline"] = llm_headline
+        summary["summary_text"] = llm_narrative
+        if llm_recs:
+            summary["recommendations"] = list(llm_recs)
+        explanation_source = "llm"
+        pending = False
+    else:
+        explanation_source = "rule_based"
+        pending = raw_status == "pending"
+
+    summary["explanation_source"] = explanation_source
+    summary["llm_explanation_pending"] = pending
+    summary["llm_explanation_status"] = raw_status
+
+    log.info(
+        "experiments.summary",
+        experiment_id=str(experiment_id),
+        explanation_source=explanation_source,
+        llm_status=raw_status,
+    )
     return ExperimentSummaryResponse(**summary)
 
 
@@ -704,6 +732,101 @@ async def get_experiment_report(
         content=json.dumps(report, indent=2, default=str),
         media_type="application/json",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /experiments/{experiment_id}/report.pdf  — Full PDF report (Phase C3)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{experiment_id}/report.pdf",
+    summary="Download full experiment report as PDF",
+    tags=["Reporting"],
+)
+async def get_experiment_report_pdf(
+    experiment_id: UUID,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Return the complete experiment report as a PDF download.
+
+    Reuses the same data fetch + summary build path as the JSON
+    report endpoint; the only difference is the rendering layer
+    (ReportLab vs JSON serialiser). Includes an audit footer with
+    generation timestamp + explanation source provenance per plan §115.
+
+    Returns 404 if the experiment does not exist.
+    """
+    from ive.construction.explanation_generator import ExplanationGenerator
+    from ive.utils.pdf_report import render_experiment_pdf
+
+    exp_repo = ExperimentRepository(db, Experiment)
+    experiment = await exp_repo.get_by_id(experiment_id)
+    if experiment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Experiment {experiment_id} not found.",
+        )
+
+    exp_dict = ExperimentResponse.model_validate(experiment).model_dump(mode="json")
+
+    dataset_dict: dict[str, Any] = {}
+    ds_repo = DatasetRepository(db, Dataset)
+    dataset = await ds_repo.get_by_id(experiment.dataset_id)
+    if dataset is not None:
+        dataset_dict = {
+            "id": str(dataset.id),
+            "name": getattr(dataset, "name", ""),
+            "target_column": getattr(dataset, "target_column", ""),
+            "row_count": getattr(dataset, "row_count", None),
+            "col_count": getattr(dataset, "col_count", None),
+        }
+
+    patterns = await exp_repo.get_error_patterns(experiment_id)
+    patterns_dicts = [_orm_to_dict(p) for p in patterns]
+
+    lv_repo = LatentVariableRepository(db, LatentVariable)
+    lvs = await lv_repo.get_by_experiment(experiment_id)
+    lv_dicts = [_orm_to_dict(v) for v in lvs]
+
+    dataset_name = dataset_dict.get("name") or str(experiment_id)[:8]
+    target_column = dataset_dict.get("target_column", "")
+    explainer = ExplanationGenerator()
+    summary = explainer.generate_experiment_summary(
+        patterns=patterns_dicts,
+        candidates=lv_dicts,
+        dataset_name=dataset_name,
+        target_column=target_column,
+    )
+
+    # Surface LLM provenance in the audit footer.
+    raw_status = getattr(experiment, "llm_explanation_status", "pending") or "pending"
+    explanation_source = "llm" if (
+        raw_status == "ready" and getattr(experiment, "llm_headline", None)
+    ) else "rule_based"
+    exp_dict["explanation_source"] = explanation_source
+    exp_dict["llm_explanation_version"] = getattr(
+        experiment, "llm_explanation_version", None
+    )
+
+    report = build_full_report(
+        experiment=exp_dict,
+        dataset=dataset_dict,
+        patterns=patterns_dicts,
+        latent_variables=lv_dicts,
+        summary=summary,
+    )
+
+    pdf_bytes = render_experiment_pdf(report)
+    filename = f"experiment_{str(experiment_id)[:8]}_report.pdf"
+    log.info("experiments.report.pdf", experiment_id=str(experiment_id))
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        },
     )
 
 

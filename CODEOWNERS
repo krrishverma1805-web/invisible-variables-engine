@@ -1,0 +1,44 @@
+# CODEOWNERS — IVE
+#
+# Per plan §121 + §154. Two approvals required on `main` for ML changes;
+# the security-reviewer is mandatory on anything touching `src/ive/llm/`.
+# GitHub auto-requests review from listed owners on PR.
+#
+# Replace the team / username placeholders below with your org's actual
+# GitHub team handles before enabling branch protection.
+
+# Default — file-by-file owners override below.
+*                                                       @ml-lead
+
+# ── ML / detection / construction (ML lead + security review on llm) ───
+src/ive/llm/                                            @ml-lead @security-reviewer
+src/ive/models/                                         @ml-lead
+src/ive/detection/                                      @ml-lead
+src/ive/construction/                                   @ml-lead
+
+# ── Database + migrations (backend + ML) ──────────────────────────────
+alembic/                                                @backend-lead @ml-lead
+src/ive/db/                                             @backend-lead @ml-lead
+
+# ── API surface + Streamlit (frontend / API lead) ─────────────────────
+src/ive/api/                                            @api-lead
+streamlit_app/                                          @frontend-lead
+
+# ── Response contract (high-stakes spec — every area lead reviews) ────
+docs/RESPONSE_CONTRACT.md                               @ml-lead @backend-lead @api-lead @security-reviewer
+
+# ── Operational config + observability ────────────────────────────────
+src/ive/observability/                                  @ml-lead @platform-lead
+ops/                                                    @platform-lead
+docs/runbooks/                                          @platform-lead @ml-lead
+
+# ── Build + CI (infra) ────────────────────────────────────────────────
+.github/workflows/                                      @platform-lead
+Dockerfile                                              @platform-lead
+docker-compose.yml                                      @platform-lead
+pyproject.toml                                          @platform-lead @ml-lead
+
+# ── Auth + governance (security-reviewer always touches) ──────────────
+src/ive/auth/                                           @security-reviewer @backend-lead
+CODEOWNERS                                              @security-reviewer
+docs/branch_protection.md                               @security-reviewer @platform-lead

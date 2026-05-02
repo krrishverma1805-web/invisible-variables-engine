@@ -160,6 +160,23 @@ async def upload_dataset(
         # Profiling failure is non-fatal — dataset is already saved
         log.warning("datasets.upload.profile_failed", error=str(exc))
 
+    # ── Seed column-sensitivity rows (non_public default per §142) ─────
+    try:
+        from ive.db.repositories.dataset_column_metadata_repo import (
+            DatasetColumnMetadataRepo,
+        )
+
+        column_names = [c.name for c in result.columns]
+        meta_repo = DatasetColumnMetadataRepo(db)
+        await meta_repo.bulk_create_default(
+            _parse_uuid(result.dataset_id),
+            column_names,
+        )
+        await db.commit()
+    except Exception as exc:
+        # Sensitivity seeding is non-fatal — admin can still PUT later.
+        log.warning("datasets.upload.sensitivity_seed_failed", error=str(exc))
+
     # ── Fetch updated ORM object and return ───────────────────────────
     repo = DatasetRepository(db, Dataset)
     dataset = await repo.get_by_id(_parse_uuid(result.dataset_id))

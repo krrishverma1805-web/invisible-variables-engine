@@ -6,7 +6,7 @@ import requests
 import streamlit as st
 from components.charts import shap_bar_chart, residual_histogram, coverage_gauge
 from components.sidebar import render_sidebar
-from components.theme import apply_carbon_theme, carbon_tag
+from components.theme import apply_carbon_theme, carbon_tag, explanation_source_badge
 
 st.set_page_config(
     page_title="Results Dashboard - IVE",
@@ -117,6 +117,33 @@ with st.spinner("Loading results…"):
     except requests.RequestException:
         st.error("Failed to load experiment summary.")
 
+    # Fetch dataset_id (needed for the column-sensitivity banner per §202)
+    dataset_id: str | None = None
+    try:
+        exp_resp = requests.get(
+            f"{API_BASE}/api/v1/experiments/{experiment_id}",
+            headers=HEADERS,
+            timeout=10,
+        )
+        if exp_resp.ok:
+            dataset_id = exp_resp.json().get("dataset_id")
+    except requests.RequestException:
+        pass
+
+    # Fetch per-column sensitivity for the banner (best-effort).
+    column_metadata: dict = {}
+    if dataset_id:
+        try:
+            col_resp = requests.get(
+                f"{API_BASE}/api/v1/datasets/{dataset_id}/columns/",
+                headers=HEADERS,
+                timeout=10,
+            )
+            if col_resp.ok:
+                column_metadata = col_resp.json()
+        except requests.RequestException:
+            pass
+
     try:
         p_csv_resp = requests.get(
             f"{API_BASE}/api/v1/experiments/{experiment_id}/patterns/export",
@@ -201,6 +228,95 @@ with btn_col3:
             use_container_width=True,
         )
 
+# ─── Shareable read-only report (Phase C2.2) ────────────────────────────
+with st.expander("Shareable read-only link", expanded=False):
+    st.caption(
+        "Generate a token-gated public URL for this experiment's report. "
+        "Tokens default to 7-day expiry and may be passphrase-protected."
+    )
+    share_col1, share_col2 = st.columns([2, 1])
+    with share_col1:
+        share_passphrase = st.text_input(
+            "Optional passphrase",
+            type="password",
+            key="share_passphrase",
+            help="Recipients must send this in the X-Share-Passphrase header.",
+        )
+        share_days = st.number_input(
+            "Expires in (days)",
+            min_value=1,
+            max_value=365,
+            value=7,
+            step=1,
+            key="share_expiry_days",
+        )
+    with share_col2:
+        st.write("")  # vertical spacer
+        st.write("")
+        if st.button("Generate share link", type="primary", use_container_width=True):
+            try:
+                payload = {"expires_in_days": int(share_days)}
+                if share_passphrase:
+                    payload["passphrase"] = share_passphrase
+                resp = requests.post(
+                    f"{API_BASE}/api/v1/experiments/{experiment_id}/shares/",
+                    headers=HEADERS,
+                    json=payload,
+                    timeout=10,
+                )
+                if resp.status_code == 201:
+                    issued = resp.json()
+                    token = issued.get("token", "")
+                    share_url = f"{API_BASE}/api/v1/share/{token}"
+                    st.success("Share link generated. Copy it now — the raw token is shown only once.")
+                    st.code(share_url, language="text")
+                    if issued.get("has_passphrase"):
+                        st.caption("Passphrase required: send via `X-Share-Passphrase` header.")
+                else:
+                    st.error(
+                        f"Failed to generate share token (HTTP {resp.status_code}): "
+                        f"{resp.text[:200]}"
+                    )
+            except requests.RequestException as exc:
+                st.error(f"Network error: {exc}")
+
+    # List + revoke existing tokens
+    try:
+        list_resp = requests.get(
+            f"{API_BASE}/api/v1/experiments/{experiment_id}/shares/",
+            headers=HEADERS,
+            timeout=10,
+        )
+        if list_resp.status_code == 200:
+            tokens = list_resp.json().get("items", [])
+            if tokens:
+                st.divider()
+                st.markdown(f"**Active share tokens ({len(tokens)})**")
+                for t in tokens:
+                    cols = st.columns([3, 2, 1])
+                    cols[0].caption(
+                        f"id `{str(t['id'])[:8]}…` · expires "
+                        f"{t.get('expires_at', '?')} · "
+                        f"{'passphrase ✓' if t.get('has_passphrase') else 'no passphrase'}"
+                    )
+                    cols[1].caption(
+                        f"created by {t.get('created_by_name') or '—'}"
+                    )
+                    if cols[2].button("Revoke", key=f"revoke_{t['id']}"):
+                        rv = requests.delete(
+                            f"{API_BASE}/api/v1/experiments/"
+                            f"{experiment_id}/shares/{t['id']}",
+                            headers=HEADERS,
+                            timeout=10,
+                        )
+                        if rv.status_code == 204:
+                            st.success("Token revoked.")
+                            st.rerun()
+                        else:
+                            st.error(f"Revoke failed (HTTP {rv.status_code}).")
+    except requests.RequestException:
+        pass
+
 st.divider()
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -227,6 +343,33 @@ if summary_data:
     summary_mode = summary_data.get("analysis_mode", analysis_mode)
     summary_profile = summary_data.get("threshold_profile", threshold_profile)
     st.caption(f"**Mode:** {summary_mode.capitalize()}  |  **Profile:** {summary_profile}")
+
+    # Dataset-level sensitivity banner (per plan §202).
+    # Single banner per page rather than per-LV — power users mark public
+    # columns once at upload, not per finding.
+    total_cols = column_metadata.get("total")
+    public_cols = column_metadata.get("public_count")
+    if total_cols and public_cols is not None and public_cols < total_cols and dataset_id:
+        st.warning(
+            f"AI explanations limited — only **{public_cols} of {total_cols}** columns "
+            f"in this dataset are marked public. Findings that reference any non-public "
+            f"column fall back to rule-based prose.  "
+            f"Visit **Dataset Settings** in the sidebar to manage sensitivity, or "
+            f"PUT `/api/v1/datasets/{dataset_id}/columns/`.",
+            icon=":material/lock:",
+        )
+
+    # AI-assisted badge — surface LLM provenance per plan §A1.
+    summary_source = summary_data.get("explanation_source", "rule_based")
+    summary_pending = bool(summary_data.get("llm_explanation_pending", False))
+    summary_llm_status = summary_data.get("llm_explanation_status")
+    summary_badge_html = explanation_source_badge(
+        summary_source,
+        pending=summary_pending,
+        status=summary_llm_status,
+    )
+    if summary_badge_html:
+        st.markdown(summary_badge_html, unsafe_allow_html=True)
 
     # Headline
     st.markdown(f"### {summary_data.get('headline', '')}")
@@ -337,7 +480,22 @@ with tab_validated:
 
                 with col_info:
                     st.markdown(f"**Description:** {lv.get('description', 'N/A')}")
-                    st.markdown(f"**Explanation:** {lv.get('explanation_text', 'N/A')}")
+                    explanation = lv.get("explanation_text", "N/A")
+                    lv_source = lv.get("explanation_source", "rule_based")
+                    lv_pending = bool(lv.get("llm_explanation_pending", False))
+                    lv_status = lv.get("llm_explanation_status")
+                    lv_badge_html = explanation_source_badge(
+                        lv_source,
+                        pending=lv_pending,
+                        status=lv_status,
+                    )
+                    if lv_badge_html:
+                        st.markdown(
+                            f"**Explanation:** {explanation} {lv_badge_html}",
+                            unsafe_allow_html=True,
+                        )
+                    else:
+                        st.markdown(f"**Explanation:** {explanation}")
                     st.markdown("**Construction Rule:**")
                     rule = lv.get("construction_rule", {})
                     st.code(json.dumps(rule, indent=2), language="json")
@@ -348,6 +506,52 @@ with tab_validated:
                     st.metric("Importance Score", f"{lv.get('importance_score', 0):.3f}")
                     boot_mode = lv.get("bootstrap_mode", analysis_mode)
                     st.caption(f"Validated in **{boot_mode.capitalize()}** mode")
+
+                    # ── Effect-size CI + selective-inference (Wave 3) ─
+                    ci_lo = lv.get("confidence_interval_lower")
+                    ci_hi = lv.get("confidence_interval_upper")
+                    if ci_lo is not None and ci_hi is not None:
+                        st.caption(
+                            f"95% CI on effect: [{float(ci_lo):.3f}, {float(ci_hi):.3f}]"
+                        )
+                    cross_fit_n = lv.get("cross_fit_splits_supporting")
+                    if cross_fit_n is not None:
+                        sel = lv.get("selection_corrected", False)
+                        suffix = " · selection-corrected" if sel else ""
+                        st.caption(f"Cross-fit splits supporting: {cross_fit_n}{suffix}")
+
+                    # ── Apply-compatibility flag (lineage gate) ───────
+                    apply_compat = lv.get("apply_compatibility", "ok")
+                    if apply_compat == "requires_review":
+                        st.warning(
+                            "Source dataset has changed since this LV was discovered — "
+                            "review before re-applying."
+                        )
+                    elif apply_compat == "incompatible":
+                        st.error(
+                            "A column referenced by this LV no longer exists — "
+                            "re-application is blocked."
+                        )
+
+                    # ── DML diagnostic (Phase C1) ─────────────────────
+                    rule_obj = lv.get("construction_rule") or {}
+                    dml_diag = rule_obj.get("dml_diagnostic") or {}
+                    if dml_diag and dml_diag.get("theta_raw") is not None:
+                        theta_dml = float(dml_diag.get("theta_dml", 0.0))
+                        theta_raw = float(dml_diag.get("theta_raw", 0.0))
+                        confounded = bool(dml_diag.get("confounded", 0))
+                        st.divider()
+                        st.markdown("**Causal screen (DML)**")
+                        st.caption(
+                            f"Raw effect: {theta_raw:.3f} · Orthogonal: {theta_dml:.3f}"
+                        )
+                        if confounded:
+                            st.warning(
+                                "Orthogonal effect collapses vs raw — "
+                                "**likely confounded by other features**."
+                            )
+                        else:
+                            st.caption("Orthogonal effect tracks raw — not confounded.")
 
                     # Model improvement metrics
                     improvement = lv.get("model_improvement_pct")

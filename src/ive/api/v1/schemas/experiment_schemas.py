@@ -55,6 +55,32 @@ class ExperimentConfig(BaseModel):  # type: ignore[misc]
         ),
     )
 
+    # ── Phase B (B2 / B5) optional overrides ───────────────────────────────
+    problem_type: Literal["regression", "binary", "multiclass"] | None = Field(
+        default=None,
+        description=(
+            "User override for the auto-detected problem type. When None, the "
+            "pipeline runs `detect_problem_type(y)` and logs the inferred value. "
+            "Multiclass is supported for prediction + uplift only — residual-based "
+            "detection is regression/binary only (per docs/RESPONSE_CONTRACT.md §8.2)."
+        ),
+    )
+    cv_strategy: Literal["auto", "kfold", "stratified", "timeseries", "group"] | None = Field(
+        default=None,
+        description=(
+            "User override for the CV splitter strategy. None → use the deployment "
+            "default (`MLSettings.cv_strategy`, defaults to 'auto')."
+        ),
+    )
+    cv_gap_size: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Purged-CV gap (samples) for TimeSeriesSplit. Set ≥ max_lag when the "
+            "dataset has lagged autoregressive features."
+        ),
+    )
+
     model_config = ConfigDict(populate_by_name=True)
 
 
@@ -153,11 +179,32 @@ class ErrorPatternResponse(BaseModel):  # type: ignore[misc]
     sample_count: int
     mean_residual: float
     std_residual: float
+    # Phase B4 + plan §96 — CIs and selective-inference bookkeeping.
+    effect_size_ci_lower: float | None = None
+    effect_size_ci_upper: float | None = None
+    effect_size_ci_method: str | None = Field(
+        default=None,
+        description="'bca' / 'percentile' / 'degenerate'. None when CI unavailable.",
+    )
+    cross_fit_splits_supporting: int | None = Field(
+        default=None,
+        description="Splits (out of K) in which this pattern was discovered.",
+    )
+    selection_corrected: bool = Field(
+        default=False,
+        description="True when CI was computed via cross-fit (selection-aware).",
+    )
     created_at: datetime
 
 
 class ExperimentSummaryResponse(BaseModel):  # type: ignore[misc]
-    """Compact experiment summary — headline, counts, and recommendations."""
+    """Compact experiment summary — headline, counts, and recommendations.
+
+    ``headline`` and ``summary_text`` surface the LLM-generated prose
+    when ``llm_explanation_status='ready'``; otherwise they fall back to
+    the rule-based generator. The ``explanation_source`` field tells the
+    UI which one is being shown so the AI-assisted badge can be rendered.
+    """
 
     headline: str
     patterns_found: int
@@ -172,6 +219,23 @@ class ExperimentSummaryResponse(BaseModel):  # type: ignore[misc]
     threshold_profile: str = Field(
         default="Permissive (Demo)",
         description="Human-readable description of the threshold profile applied.",
+    )
+
+    # ── LLM enrichment surface (per plan §A1) ──────────────────────────────
+    explanation_source: Literal["llm", "rule_based"] = Field(
+        default="rule_based",
+        description="Which generator produced headline + summary_text.",
+    )
+    llm_explanation_pending: bool = Field(
+        default=False,
+        description=(
+            "True when llm_explanation_status='pending' — UI should poll. "
+            "Always false in flag-off / disabled / failed states."
+        ),
+    )
+    llm_explanation_status: str = Field(
+        default="pending",
+        description="Lifecycle: pending | ready | failed | disabled.",
     )
 
 

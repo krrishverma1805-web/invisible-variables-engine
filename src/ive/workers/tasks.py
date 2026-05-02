@@ -134,6 +134,33 @@ def _update_experiment(
         conn.close()
 
 
+def _record_llm_task_id(experiment_id: str, llm_task_id: str) -> None:
+    """Persist the chained LLM task's Celery ID into ``experiments.llm_task_id``.
+
+    Called from ``run_experiment`` after :func:`generate_llm_explanations`
+    is queued, so :func:`cancel_experiment` can revoke the chained task
+    on cooperative shutdown (per plan §171).  Best-effort — failures are
+    logged but never propagate.
+    """
+    conn = _get_sync_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE experiments SET llm_task_id = %s WHERE id = %s::uuid",
+            (llm_task_id, experiment_id),
+        )
+        conn.commit()
+    except Exception as exc:
+        conn.rollback()
+        log.warning(
+            "task.llm_task_id.persist_failed",
+            experiment_id=experiment_id,
+            error=str(exc),
+        )
+    finally:
+        conn.close()
+
+
 def _get_experiment(experiment_id: str) -> dict[str, Any] | None:
     """Fetch a minimal experiment row (status, celery_task_id, file_path)."""
     conn = _get_sync_conn()
@@ -315,6 +342,26 @@ def run_experiment(
             n_latent_variables=n_latent,
         )
 
+        # ── Chain LLM enrichment (per plan §A1) ──────────────────────────
+        # Always queued — the task short-circuits to ``disabled`` when
+        # LLM_EXPLANATIONS_ENABLED=false so explanation_status is
+        # deterministic from the API surface.
+        try:
+            llm_async = generate_llm_explanations.apply_async(
+                args=[experiment_id],
+                countdown=2,
+                headers={"request_id": str(self.request.id) if self.request.id else None},
+            )
+            _record_llm_task_id(experiment_id, str(llm_async.id))
+        except Exception as exc:
+            # Non-fatal: chaining failure should never fail the
+            # experiment itself. Endpoints will fall back to rule-based.
+            log.warning(
+                "task.run_experiment.llm_chain_failed",
+                experiment_id=experiment_id,
+                error=str(exc),
+            )
+
         return {
             "experiment_id": experiment_id,
             "status": "completed",
@@ -492,4 +539,125 @@ def health_check_task() -> dict[str, Any]:
     return {
         "status": "worker_healthy",
         "timestamp": datetime.now(UTC).isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Task 5: generate_llm_explanations  (per plan §A1, §103, §171)
+# ---------------------------------------------------------------------------
+
+try:
+    from celery.contrib.abortable import AbortableTask
+
+    _LLM_BASE_TASK = AbortableTask
+except ImportError:  # pragma: no cover - older celery without abortable
+    _LLM_BASE_TASK = BaseIVETask
+
+
+@celery_app.task(  # type: ignore[untyped-decorator]
+    base=_LLM_BASE_TASK,
+    bind=True,
+    name="ive.workers.tasks.generate_llm_explanations",
+    max_retries=2,
+    default_retry_delay=30,
+    queue="analysis",
+    acks_late=True,
+)
+def generate_llm_explanations(self: Task, experiment_id: str) -> dict[str, Any]:
+    """Post-pipeline task that fills the ``llm_*`` columns on LVs and Experiment.
+
+    Always tail-of-pipeline:  ``run_experiment`` chains to this task only
+    when ``LLM_EXPLANATIONS_ENABLED=true``. With the flag off we still
+    queue the task — it short-circuits to mark every row ``disabled``
+    so endpoints can deterministically read explanation status.
+
+    Cancellation: uses ``AbortableTask.is_aborted()`` (per plan §171). The
+    async core polls this between LVs; in-flight HTTP completes within
+    ``groq_timeout_seconds``.
+
+    Args:
+        experiment_id: String UUID of the experiment.
+
+    Returns:
+        Summary dict from :class:`EnrichmentResult`.
+    """
+    from ive.workers.llm_enrichment import run_llm_enrichment_async
+
+    log.info("task.llm_enrichment.start", experiment_id=experiment_id)
+
+    def _check_aborted() -> bool:
+        return bool(getattr(self, "is_aborted", lambda: False)())
+
+    try:
+        result = asyncio.run(
+            run_llm_enrichment_async(experiment_id, is_aborted=_check_aborted)
+        )
+    except Exception as exc:
+        log.error(
+            "task.llm_enrichment.error",
+            experiment_id=experiment_id,
+            error=str(exc),
+            exc_info=True,
+        )
+        raise
+
+    log.info(
+        "task.llm_enrichment.done",
+        experiment_id=experiment_id,
+        status=result.status,
+        n_total=result.n_lv_total,
+        n_ready=result.n_lv_ready,
+        n_disabled=result.n_lv_disabled,
+        n_failed=result.n_lv_failed,
+    )
+    return {
+        "experiment_id": result.experiment_id,
+        "status": result.status,
+        "n_lv_total": result.n_lv_total,
+        "n_lv_ready": result.n_lv_ready,
+        "n_lv_disabled": result.n_lv_disabled,
+        "n_lv_failed": result.n_lv_failed,
+    }
+
+
+# ---------------------------------------------------------------------------
+# FPR sentinel (Phase C4 — beat-scheduled nightly @ 02:30 UTC)
+# ---------------------------------------------------------------------------
+
+
+@celery_app.task(  # type: ignore[untyped-decorator]
+    name="ive.workers.tasks.fpr_sentinel_run",
+    queue="default",
+    acks_late=True,
+)
+def fpr_sentinel_run() -> dict[str, Any]:
+    """Run the synthetic-noise FPR sentinel and emit Prometheus + structlog.
+
+    Per plan §C4 + §190: 20 seeds, alert if Clopper-Pearson upper-95% CI
+    on observed FPR exceeds 7%. Pure-function core lives in
+    :func:`ive.observability.fpr_sentinel.run_sentinel` for unit testability.
+    """
+    from ive.observability.fpr_sentinel import run_sentinel
+    from ive.observability.metrics import record_fpr_sentinel
+
+    log.info("task.fpr_sentinel.start")
+    result = run_sentinel()
+
+    record_fpr_sentinel(fpr=result.empirical_fpr, status=result.status)
+
+    log.info(
+        "task.fpr_sentinel.done",
+        n_runs=result.n_runs,
+        empirical_fpr=result.empirical_fpr,
+        upper_95_ci=result.upper_95_ci,
+        threshold=result.threshold,
+        status=result.status,
+    )
+    return {
+        "n_runs": result.n_runs,
+        "n_false_positive_runs": result.n_false_positive_runs,
+        "empirical_fpr": result.empirical_fpr,
+        "upper_95_ci": result.upper_95_ci,
+        "threshold": result.threshold,
+        "status": result.status,
     }

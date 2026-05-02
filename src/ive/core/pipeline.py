@@ -32,7 +32,6 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import pandas as pd
 import structlog
-
 from sklearn.model_selection import train_test_split
 
 from ive.construction.bootstrap_validator import BootstrapValidator
@@ -48,7 +47,12 @@ from ive.detection.clustering import HDBSCANClustering
 from ive.detection.pattern_scorer import PatternScorer
 from ive.detection.subgroup_discovery import SubgroupDiscovery
 from ive.detection.temporal_analysis import TemporalAnalyzer
+from ive.models.classifier_models import (
+    detect_problem_type,
+    signed_deviance_residual,
+)
 from ive.models.cross_validator import CrossValidator
+from ive.models.dispatch import resolve_model_class
 from ive.models.linear_model import LinearIVEModel
 from ive.models.xgboost_model import XGBoostIVEModel
 from ive.utils.logging import get_logger
@@ -293,6 +297,8 @@ def _build_residual_rows(
     y_values: np.ndarray[Any, Any],
     oof_predictions: np.ndarray[Any, Any],
     oof_residuals: np.ndarray[Any, Any],
+    *,
+    residual_kind: str = "raw",
 ) -> list[dict[str, Any]]:
     """Build a list of residual-row dicts suitable for ``add_residuals_batch``.
 
@@ -321,6 +327,14 @@ def _build_residual_rows(
 
     rows: list[dict[str, Any]] = []
     for i in indices:
+        # Skip rows that were never validated (TimeSeriesSplit leaves the
+        # first training-only chunk unassigned with NaN OOF preds).
+        if (
+            int(fold_assignments[i]) < 0
+            or not np.isfinite(oof_predictions[i])
+            or not np.isfinite(oof_residuals[i])
+        ):
+            continue
         rows.append(
             {
                 "model_type": model_type,
@@ -330,6 +344,7 @@ def _build_residual_rows(
                 "predicted_value": float(oof_predictions[i]),
                 "residual_value": float(oof_residuals[i]),
                 "abs_residual": float(abs(oof_residuals[i])),
+                "residual_kind": residual_kind,
             }
         )
     return rows
@@ -388,11 +403,38 @@ class IVEPipeline:
             Exception:  Any unhandled error is logged, the experiment is
                         marked ``"failed"`` in the DB, and then re-raised.
         """
+        from ive.observability.tracing import trace_span
+
         t_start = time.perf_counter()
+        # Wall-clock at each phase transition; populated in update_progress
+        # calls below and read once at the next transition or at completion
+        # to record `record_phase_duration` (Phase C4 metrics).
+        phase_clock: dict[str, float] = {"understand": t_start}
+
+        def _emit_phase_duration(phase: str) -> None:
+            from ive.observability.metrics import record_phase_duration as _rpd
+
+            started = phase_clock.get(phase)
+            if started is None:
+                return
+            duration = max(0.0, time.perf_counter() - started)
+            try:
+                _rpd(phase=phase, duration_seconds=duration)
+            except Exception:  # pragma: no cover - metrics never block pipeline
+                pass
+
         exp_repo = ExperimentRepository(self.session, Experiment)
 
         # Outer variable declared here so the except block can reference it.
         validated: list[dict[str, Any]] = []
+
+        # Phase C4 tracing: one root span per experiment lifecycle. Spans
+        # nest naturally inside Groq HTTPX, asyncpg, and Celery autoinstrumentation.
+        _experiment_span_cm = trace_span(
+            "ive.experiment", {"experiment_id": str(experiment_id)}
+        )
+        _experiment_span_cm.__enter__()
+        _span_closed = False
 
         try:
             # Bind experiment_id to logger context for all subsequent log lines
@@ -555,6 +597,8 @@ class IVEPipeline:
                     "target_column": target_col,
                 },
             )
+            _emit_phase_duration("understand")
+            phase_clock["model"] = time.perf_counter()
             await exp_repo.update_progress(experiment_id, 20, "model")
 
             # ── Phase 2: Model — cross-validation ─────────────────────
@@ -569,27 +613,165 @@ class IVEPipeline:
 
             cv_results_by_model: dict[str, Any] = {}  # Fix 3: track per-model cv_result
 
+            # Resolve problem type (Phase B5). User override always wins; the
+            # heuristic is conservative and falls back to regression on any
+            # ambiguous case so existing demo experiments keep their current
+            # behavior.
+            problem_type = detect_problem_type(
+                y_train,
+                user_override=config.get("problem_type"),
+            )
+            # Persist on the experiment row so endpoints + downstream
+            # detection know which residual kind they're looking at.
+            try:
+                await exp_repo.update(
+                    experiment_id, problem_type=problem_type
+                )
+            except Exception as exc:  # pragma: no cover - belt + suspenders
+                self.logger.warning(
+                    "pipeline.problem_type.persist_failed",
+                    experiment_id=str(experiment_id),
+                    error=str(exc),
+                )
+
+            # Resolve CV strategy (Phase B2) and gap from config + settings.
+            from ive.config import get_settings as _get_settings
+
+            _ml_settings = _get_settings()
+            cv_strategy = config.get("cv_strategy") or _ml_settings.cv_strategy
+            cv_gap_size = config.get("cv_gap_size")
+            if cv_gap_size is None:
+                cv_gap_size = _ml_settings.cv_gap_size
+
+            # If the dataset has a time column the holdout split (above)
+            # already sorted train rows chronologically, so row-index is a
+            # valid monotonic time_index for TimeSeriesSplit. When there's
+            # no time column we leave time_index None so 'auto' resolution
+            # picks kfold/stratified.
+            _has_time_col = bool(
+                getattr(dataset, "time_column", None)
+                and getattr(dataset, "time_column", None) in df.columns
+            )
+            time_index_array = (
+                np.arange(len(y_train), dtype=int) if _has_time_col else None
+            )
+
             _record_event(
                 experiment_id,
                 event_type="modeling_started",
                 message=(
                     f"Cross-validation started with models: {', '.join(model_types)}, "
-                    f"{cv_folds} folds."
+                    f"{cv_folds} folds, problem_type={problem_type}, "
+                    f"cv_strategy={cv_strategy}."
                 ),
                 phase="model",
-                metadata={"model_types": model_types, "cv_folds": cv_folds},
+                metadata={
+                    "model_types": model_types,
+                    "cv_folds": cv_folds,
+                    "problem_type": problem_type,
+                    "cv_strategy": cv_strategy,
+                    "cv_gap_size": cv_gap_size,
+                },
             )
 
-            for model_type in model_types:
-                model_cls, stratified = _MODEL_MAP.get(model_type, (LinearIVEModel, False))
-                model_instance = model_cls()
+            # Phase B1: optionally tune hyperparameters per model up front.
+            # The HPO inner CV uses the same strategy as the outer pipeline
+            # (per plan §B1) so temporal data stays leak-safe.
+            hpo_results_by_model: dict[str, Any] = {}
+            if _ml_settings.hpo_enabled:
+                from ive.models.hyperparameter_optimizer import optimize as hpo_optimize
+                from ive.models.search_spaces import (
+                    get_pinned_hyperparams,
+                    get_search_space,
+                )
 
-                cv = CrossValidator(model_instance, n_splits=cv_folds, stratified=stratified)
+                for model_type in model_types:
+                    try:
+                        space = get_search_space(model_type, problem_type)
+                        pinned = get_pinned_hyperparams(model_type, problem_type)
+                        cls = resolve_model_class(model_type, problem_type)
+                    except ValueError:
+                        # Unsupported combination — model skipped further down.
+                        continue
+
+                    def _factory(
+                        params: dict[str, Any],
+                        _cls: type = cls,
+                        _pinned: dict[str, Any] = pinned,
+                    ) -> Any:
+                        return _cls(**{**_pinned, **params})
+
+                    hpo_results_by_model[model_type] = hpo_optimize(
+                        model_factory=_factory,
+                        X=X_values,
+                        y=y_train,
+                        search_space=space,
+                        n_trials=_ml_settings.hpo_n_trials,
+                        timeout_seconds=float(_ml_settings.hpo_timeout_seconds),
+                        cv_strategy=cv_strategy,
+                        inner_cv_splits=_ml_settings.hpo_inner_cv_splits,
+                        time_index=time_index_array,
+                        seed=(
+                            _ml_settings.hpo_study_seed
+                            if _ml_settings.hpo_study_seed is not None
+                            else _ml_settings.random_seed
+                        ),
+                    )
+
+            for model_type in model_types:
+                # Phase B5 dispatch: pick the right model subclass for the
+                # active problem type. Multiclass + linear raises (the
+                # dispatch is explicit about unsupported combinations).
+                try:
+                    model_cls = resolve_model_class(model_type, problem_type)
+                except ValueError as exc:
+                    self.logger.warning(
+                        "pipeline.model.skipped_unsupported",
+                        model_type=model_type,
+                        problem_type=problem_type,
+                        error=str(exc),
+                    )
+                    continue
+
+                # Phase B1: instantiate with tuned params if HPO produced any.
+                hpo_result = hpo_results_by_model.get(model_type)
+                if hpo_result is not None and hpo_result.best_params:
+                    from ive.models.search_spaces import get_pinned_hyperparams
+
+                    pinned = get_pinned_hyperparams(model_type, problem_type)
+                    model_instance = model_cls(**{**pinned, **hpo_result.best_params})
+                else:
+                    model_instance = model_cls()
+
+                cv = CrossValidator(
+                    model_instance,
+                    n_splits=cv_folds,
+                    cv_strategy=cv_strategy,
+                    time_index=time_index_array,
+                    gap=int(cv_gap_size),
+                )
                 cv_result = cv.fit(X_values, y_train)
                 cv_results_by_model[model_type] = cv_result
 
                 oof_preds = cv_result.oof_predictions
-                oof_resid = cv_result.oof_residuals  # y - oof_preds
+
+                # Phase B5: residuals for classification are the signed
+                # deviance residuals, not (y - p). Detection consumes them
+                # the same way (sign + magnitude); the residual_kind column
+                # tells downstream readers which interpretation applies.
+                if problem_type in ("binary", "multiclass"):
+                    if problem_type == "binary":
+                        oof_resid = signed_deviance_residual(y_train, oof_preds)
+                    else:
+                        # Multiclass residual-based detection is not yet
+                        # supported (per docs/RESPONSE_CONTRACT.md §8.2).
+                        # We still store the raw (y - argmax(p)) residual so
+                        # the experiment row has a complete CV record.
+                        oof_resid = y_train - oof_preds
+                    residual_kind = "deviance" if problem_type == "binary" else "raw"
+                else:
+                    oof_resid = cv_result.oof_residuals  # y - oof_preds
+                    residual_kind = "raw"
 
                 all_residuals.append(
                     {
@@ -597,8 +779,30 @@ class IVEPipeline:
                         "residuals": oof_resid,
                         "abs_residuals": np.abs(oof_resid),
                         "oof_predictions": oof_preds,
+                        "residual_kind": residual_kind,
                     }
                 )
+
+                # Phase B1 — persist HPO outcome on every fold row of this
+                # model so the search history survives downsampling.
+                _hpo_payload: dict[str, Any] = {}
+                _hpo_for_model = hpo_results_by_model.get(model_type)
+                if _hpo_for_model is not None:
+                    _hpo_payload = {
+                        "hpo_search_results": {
+                            "best_params": _hpo_for_model.best_params,
+                            "best_score": _hpo_for_model.best_score,
+                            "n_trials": _hpo_for_model.n_trials,
+                            "elapsed_seconds": _hpo_for_model.elapsed_seconds,
+                            "timed_out": _hpo_for_model.timed_out,
+                            "history": _hpo_for_model.search_history,
+                        },
+                        "hpo_best_score": (
+                            float(_hpo_for_model.best_score)
+                            if np.isfinite(_hpo_for_model.best_score)
+                            else None
+                        ),
+                    }
 
                 # Persist per-fold metrics
                 for fold_idx, fold_score in enumerate(cv_result.fold_scores):
@@ -617,7 +821,12 @@ class IVEPipeline:
                         train_metric=float(fold_score),
                         val_metric=val_rmse,
                         metric_name="r2_and_rmse",
-                        hyperparams={},
+                        hyperparams=(
+                            _hpo_for_model.best_params
+                            if _hpo_for_model is not None
+                            else {}
+                        ),
+                        **_hpo_payload,
                     )
 
                 # Bulk-insert residuals for this model
@@ -627,6 +836,7 @@ class IVEPipeline:
                     y_train,
                     oof_preds,
                     oof_resid,
+                    residual_kind=residual_kind,
                 )
                 await exp_repo.add_residuals_batch(experiment_id, residual_rows)
 
@@ -664,10 +874,56 @@ class IVEPipeline:
                     },
                 )
 
+            # ── Phase B3: Stacked ensemble (Phase-5-uplift only) ─────
+            # Per plan §95: detection always runs on canonical XGBoost
+            # residuals. The ensemble exists ONLY to give Phase 5 a
+            # fairer baseline ("ensemble + LV vs ensemble alone").
+            ensemble_result = None
+            if (
+                _ml_settings.ensemble_enabled
+                and len(cv_results_by_model) >= 2
+                and problem_type in ("regression", "binary")
+            ):
+                from ive.models.ensemble import StackedEnsemble
+
+                base_oof = {
+                    mt: cv_results_by_model[mt].oof_predictions
+                    for mt in cv_results_by_model
+                }
+                try:
+                    ensemble = StackedEnsemble(
+                        base_oof_predictions=base_oof,
+                        problem_type=problem_type,
+                        seed=_ml_settings.random_seed,
+                        n_meta_splits=_ml_settings.ensemble_n_meta_splits,
+                    )
+                    ensemble_result = ensemble.fit(y_train)
+                    _record_event(
+                        experiment_id,
+                        event_type="ensemble_completed",
+                        message=(
+                            f"Stacked ensemble fit "
+                            f"({ensemble_result.meta_kind} meta) over "
+                            f"{len(base_oof)} base models."
+                        ),
+                        phase="model",
+                        metadata={
+                            "meta_kind": ensemble_result.meta_kind,
+                            "blend_weights": ensemble_result.blend_weights,
+                            "n_base_models": len(base_oof),
+                        },
+                    )
+                except Exception as exc:
+                    self.logger.warning(
+                        "pipeline.ensemble.skipped",
+                        error=str(exc),
+                    )
+
             # ── SHAP Interaction Analysis ────────────────────────────
             from ive.detection.shap_interactions import SHAPInteractionAnalyzer
 
             shap_interaction_pairs: list[tuple[str, str, float]] = []
+            shap_result: Any = None  # B8 reads this; pre-bind so dir() checks aren't needed
 
             # Prefer XGBoost for SHAP (TreeExplainer is exact); fall back to linear
             shap_cv = cv_results_by_model.get("xgboost") or cv_results_by_model.get("linear")
@@ -693,6 +949,8 @@ class IVEPipeline:
             else:
                 self.logger.info("pipeline.shap_skipped", reason="no_fitted_models")
 
+            _emit_phase_duration("model")
+            phase_clock["detect"] = time.perf_counter()
             await exp_repo.update_progress(experiment_id, 55, "detect")
 
             # ── Phase 3: Detect — pattern analysis ────────────────────
@@ -727,20 +985,40 @@ class IVEPipeline:
 
             n_models = len(all_residuals)
 
+            # Phase B7: enrich X_train with derived interaction features
+            # so subgroup discovery treats them as first-class columns.
+            # Defined here at outer scope so synthesizer + bootstrap
+            # validator can reference the augmented frame later (Wave 5
+            # audit fix — patterns naming __ix__ columns must round-trip
+            # through synthesis and bootstrap resampling).
+            from ive.detection.interaction_features import (
+                select_top_interactions,
+                synthesize_interaction_features,
+            )
+
+            interaction_pairs = select_top_interactions(
+                shap_interaction_pairs, top_k=5
+            )
+            X_for_subgroup = synthesize_interaction_features(
+                X_train, interaction_pairs
+            )
+
             if n_models <= 1:
                 # Single model — use the simple/fast path (no agreement scoring)
                 residuals = primary["residuals"]
                 abs_residuals = primary["abs_residuals"]
 
                 sg = SubgroupDiscovery(min_effect_size=sg_effect_size, min_bin_samples=sg_min_subgroup)
-                sg_patterns = sg.detect(X_train, residuals)
+                sg_patterns = sg.detect(X_for_subgroup, residuals)
                 all_patterns.extend(sg_patterns)
 
                 hdb = HDBSCANClustering()
                 cl_patterns = hdb.detect(X_train, abs_residuals)
                 all_patterns.extend(cl_patterns)
             else:
-                # Multi-model ensemble: detect per model, then score by agreement
+                # Multi-model ensemble: detect per model, then score by agreement.
+                # X_for_subgroup is already augmented at outer scope (Wave 5
+                # audit fix — single source of truth for the augmented frame).
                 per_model_patterns: dict[str, list[dict[str, Any]]] = {}
 
                 for resid_data in all_residuals:
@@ -751,7 +1029,7 @@ class IVEPipeline:
                     model_patterns: list[dict[str, Any]] = []
 
                     sg = SubgroupDiscovery(min_effect_size=sg_effect_size, min_bin_samples=sg_min_subgroup)
-                    sg_pats = sg.detect(X_train, m_residuals)
+                    sg_pats = sg.detect(X_for_subgroup, m_residuals)
                     for p in sg_pats:
                         p["source_model"] = mtype
                     model_patterns.extend(sg_pats)
@@ -905,14 +1183,82 @@ class IVEPipeline:
                     ),
                 )
 
+            # ── Phase B8: variance-regime detection ───────────────────
+            # LR test on |residuals| ~ feature; passes when a feature
+            # explains conditional variance even if no main subgroup
+            # surfaced. Detection runs on canonical residuals (per
+            # plan §95). Bounded to top-20 features by SHAP main effect
+            # so runtime stays reasonable on wide datasets.
+            try:
+                from ive.detection.variance_regime import VarianceRegimeDetector
+
+                # Wave 5 audit fix: replace brittle ``"primary" in dir()`` /
+                # ``"shap_result" in dir()`` checks (Python's dir() inside
+                # methods doesn't reliably enumerate locals) with explicit
+                # variable references. ``primary`` is always assigned in
+                # Phase 2 above; ``shap_result`` is pre-bound to None.
+                primary_resid_for_var = primary["residuals"]
+                top_var_features: list[str] | None = None
+                if shap_result is not None and getattr(shap_result, "mean_abs_shap", None):
+                    ranked = sorted(
+                        shap_result.mean_abs_shap.items(),
+                        key=lambda kv: kv[1],
+                        reverse=True,
+                    )
+                    top_var_features = [name for name, _ in ranked[:20]]
+                vr_detector = VarianceRegimeDetector()
+                vr_patterns = vr_detector.detect(
+                    X_train, primary_resid_for_var, feature_names=top_var_features
+                )
+                for vrp in vr_patterns:
+                    all_patterns.append(
+                        {
+                            "pattern_type": "variance_regime",
+                            "feature": vrp.feature,
+                            "column_name": vrp.feature,
+                            "effect_size": float(vrp.spread_ratio),
+                            "p_value": float(vrp.p_value),
+                            "adjusted_alpha": float(vrp.p_value),
+                            "lr_statistic": float(vrp.lr_statistic),
+                            "spread_ratio": float(vrp.spread_ratio),
+                            "sample_count": int(vrp.n_samples),
+                            "mean_residual": 0.0,
+                            "std_residual": 0.0,
+                            "bin_summary": vrp.bin_summary,
+                        }
+                    )
+                self.logger.info(
+                    "pipeline.variance_regime_patterns",
+                    n_variance_regimes=len(vr_patterns),
+                )
+            except Exception as exc:
+                self.logger.warning(
+                    "pipeline.variance_regime.skipped", error=str(exc)
+                )
+
             # ── Score and rank patterns ───────────────────────────────
             if all_patterns:
                 # PatternScorer re-computes effect sizes against PRIMARY model's
                 # residuals. For ensemble patterns from other models, this tests
                 # whether the pattern's signal persists in the primary model —
                 # which is the cross-model validation signal.
+                # Wave 5 audit fix: variance_regime patterns use a different
+                # statistical scale (spread_ratio in 2–10) that can't share
+                # the Cohen's-d-scaled top-20 slot. Pass them through scoring
+                # untouched.
+                # Type annotations needed because the outer ``vr_patterns``
+                # name is also used by the B8 detection block above for
+                # the typed VarianceRegimePattern dataclass list — without
+                # explicit annotations mypy unifies the two and complains
+                # at the concatenation below.
+                vr_patterns_for_persist: list[dict[str, Any]] = [
+                    p for p in all_patterns if p.get("pattern_type") == "variance_regime"
+                ]
+                non_vr_patterns: list[dict[str, Any]] = [
+                    p for p in all_patterns if p.get("pattern_type") != "variance_regime"
+                ]
                 scorer = PatternScorer()
-                scored = scorer.score_and_rank(all_patterns, residuals, top_k=20)
+                scored = scorer.score_and_rank(non_vr_patterns, residuals, top_k=20)
                 if scored:
                     # Convert ScoredPattern objects back to dicts for synthesis
                     scored_dicts: list[dict[str, Any]] = []
@@ -920,11 +1266,12 @@ class IVEPipeline:
                         raw = sp.raw_pattern if isinstance(sp.raw_pattern, dict) else {}
                         raw["_composite_score"] = sp.composite_score
                         scored_dicts.append(raw)
-                    all_patterns = scored_dicts
+                    all_patterns = scored_dicts + vr_patterns_for_persist
                     self.logger.info(
                         "pipeline.scoring_done",
                         n_before=len(sg_patterns) + len(cl_patterns),
                         n_after=len(scored_dicts),
+                        n_variance_regime=len(vr_patterns_for_persist),
                     )
 
             # Log top patterns for operational tracing
@@ -976,6 +1323,8 @@ class IVEPipeline:
                     "n_total_patterns": len(all_patterns),
                 },
             )
+            _emit_phase_duration("detect")
+            phase_clock["construct"] = time.perf_counter()
             await exp_repo.update_progress(experiment_id, 75, "construct")
 
             # ── Phase 4: Construct — synthesis + validation ───────────
@@ -993,17 +1342,22 @@ class IVEPipeline:
                     metadata={"n_input_patterns": len(all_patterns)},
                 )
                 synth = VariableSynthesizer()
-                candidates = synth.synthesize(all_patterns, X_train)
+                # Wave 5 audit fix: use X_for_subgroup (augmented with B7
+                # __ix__ columns) so patterns referencing those columns can
+                # be synthesized + bootstrap-validated. The bootstrap
+                # validator's apply_construction_rule looks up by column
+                # name, so the augmented frame must be the input here.
+                candidates = synth.synthesize(all_patterns, X_for_subgroup)
 
                 # ── Causal plausibility check (annotate, don't discard) ──
                 from ive.construction.causal_checker import CausalChecker
 
                 causal_checker = CausalChecker()
-                candidates = causal_checker.filter(candidates, X_train, target_column=target_col)
+                candidates = causal_checker.filter(candidates, X_for_subgroup, target_column=target_col)
 
                 validator = BootstrapValidator(mode=analysis_mode)  # type: ignore[arg-type]
                 validated = validator.validate(
-                    X_train, candidates, n_iterations=int(config.get("bootstrap_iterations", 50))
+                    X_for_subgroup, candidates, n_iterations=int(config.get("bootstrap_iterations", 50))
                 )
 
                 # Log per-candidate outcomes for traceability
@@ -1103,6 +1457,14 @@ class IVEPipeline:
                         "explanation_text": explanation,
                         "status": var.get("status", "rejected"),
                     }
+                    # Phase B4: persist BCa-or-percentile CI on the LV row
+                    # (the legacy ``confidence_interval_lower/upper`` columns
+                    # exist already; B4 finally fills them).
+                    ci_lo = var.get("effect_size_ci_lower")
+                    ci_hi = var.get("effect_size_ci_upper")
+                    if ci_lo is not None and ci_hi is not None:
+                        row["confidence_interval_lower"] = float(ci_lo)
+                        row["confidence_interval_upper"] = float(ci_hi)
                     # Persist rejection reason for rejected candidates
                     if var.get("rejection_reason"):
                         row["rejection_reason"] = var["rejection_reason"]
@@ -1209,11 +1571,42 @@ class IVEPipeline:
                     y_train.dtype, np.integer
                 )
 
-                # Baseline: train on X_train, evaluate on X_holdout
-                baseline_model = XGBoostIVEModel()
+                # Phase B3: prefer the stacked ensemble as the Phase-5
+                # baseline when one was successfully built (per plan §95).
+                # The ensemble gives a fairer "ensemble + LV vs ensemble"
+                # comparison than the legacy XGBoost-only baseline.
+                # When ensemble construction failed (single base model,
+                # multiclass, etc.) we fall back to the legacy path.
+                baseline_model: Any
+                baseline_kind = "xgboost"
                 try:
-                    baseline_model.fit(X_values, y_train)
-                    baseline_preds = baseline_model.predict(X_holdout_processed)
+                    if ensemble_result is not None and ensemble_result.meta_learner is not None:
+                        # Fit one *final* base model per type on the full
+                        # training set, then ensemble.predict the holdout.
+                        full_base_models: dict[str, Any] = {}
+                        for mt in cv_results_by_model:
+                            cls_for_final = resolve_model_class(mt, problem_type)
+                            tuned = (
+                                hpo_results_by_model.get(mt).best_params
+                                if hpo_results_by_model.get(mt) is not None
+                                and hpo_results_by_model[mt].best_params
+                                else {}
+                            )
+                            from ive.models.search_spaces import get_pinned_hyperparams
+                            pinned = get_pinned_hyperparams(mt, problem_type)
+                            full_model = cls_for_final(**{**pinned, **tuned})
+                            full_model.fit(X_values, y_train)
+                            full_base_models[mt] = full_model
+                        base_holdout_preds = {
+                            mt: m.predict(X_holdout_processed)
+                            for mt, m in full_base_models.items()
+                        }
+                        baseline_preds = ensemble_result.predict(base_holdout_preds)
+                        baseline_kind = "ensemble"
+                    else:
+                        baseline_model = XGBoostIVEModel()
+                        baseline_model.fit(X_values, y_train)
+                        baseline_preds = baseline_model.predict(X_holdout_processed)
 
                     if is_classification and roc_auc_score:
                         baseline_metric = float(roc_auc_score(y_holdout, baseline_preds))
@@ -1226,6 +1619,7 @@ class IVEPipeline:
                         "pipeline.baseline_metric",
                         metric=metric_name,
                         value=round(baseline_metric, 4),
+                        baseline_kind=baseline_kind,
                     )
                 except Exception as base_err:
                     self.logger.warning("pipeline.baseline_failed", error=str(base_err))
@@ -1352,6 +1746,7 @@ class IVEPipeline:
             )
 
             # ── Complete ──────────────────────────────────────────────
+            _emit_phase_duration("construct")
             await exp_repo.update_progress(experiment_id, 100, "complete")
 
             elapsed = round(time.perf_counter() - t_start, 2)
@@ -1398,6 +1793,17 @@ class IVEPipeline:
                 exc_info=True,
             )
             try:
+                from ive.observability.metrics import record_phase_failed
+
+                # Best-effort: identify the active phase from phase_clock so
+                # the metric label points at *where* the failure happened.
+                active_phase = max(
+                    phase_clock.items(), key=lambda kv: kv[1], default=("unknown", 0.0)
+                )[0]
+                record_phase_failed(phase=active_phase, reason=type(exc).__name__)
+            except Exception:  # pragma: no cover - metrics never block pipeline
+                pass
+            try:
                 _record_event(
                     experiment_id,
                     event_type="experiment_failed",
@@ -1408,4 +1814,18 @@ class IVEPipeline:
                 await exp_repo.mark_failed(experiment_id, str(exc))
             except Exception:
                 pass
+            try:
+                _experiment_span_cm.__exit__(type(exc), exc, exc.__traceback__)
+                _span_closed = True
+            except Exception:  # pragma: no cover - tracing never blocks
+                pass
             raise
+        finally:
+            # Close the span exactly once. The exception branch above closes
+            # it with the error info attached; the success branch reaches
+            # this finally with `_span_closed=False` and closes cleanly.
+            if not _span_closed:
+                try:
+                    _experiment_span_cm.__exit__(None, None, None)
+                except Exception:  # pragma: no cover - tracing never blocks
+                    pass

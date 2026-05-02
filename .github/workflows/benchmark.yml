@@ -1,0 +1,88 @@
+name: Benchmark
+
+# Plan §129 + §151 — pipeline P95 phase duration regression check.
+# Runs only on PRs labeled `benchmark` and on a weekly schedule, on a
+# self-hosted runner pinned for low variance. Threshold widened to 25%
+# on P95 to absorb residual noise; baseline updated explicitly via
+# `make update-benchmark-baseline` (manual review).
+
+on:
+  pull_request:
+    types: [labeled, synchronize]
+    branches: ["main"]
+  schedule:
+    - cron: "0 7 * * 1"  # Mondays 07:00 UTC
+
+jobs:
+  benchmark:
+    name: benchmark-no-regression
+    if: |
+      github.event_name == 'schedule' ||
+      contains(github.event.pull_request.labels.*.name, 'benchmark')
+    # If a self-hosted runner labelled `ive-benchmark` is registered,
+    # use it (lower variance per plan §151). Otherwise this job will be
+    # held queued, prompting the operator to register one.
+    runs-on: [self-hosted, ive-benchmark]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install poetry==1.8.3
+      - run: poetry install --no-interaction --no-ansi --extras metrics
+
+      - name: Run benchmark (median-of-5)
+        run: |
+          set -eu
+          mkdir -p benchmark_results
+          for i in 1 2 3 4 5; do
+            PYTHONPATH=src poetry run python benchmark_ive.py \
+              --output benchmark_results/run_$i.json
+          done
+          PYTHONPATH=src poetry run python -c "
+          import json, glob, statistics
+          phases = {}
+          for f in sorted(glob.glob('benchmark_results/run_*.json')):
+              d = json.load(open(f))
+              for ph, stats in d.get('phases', {}).items():
+                  phases.setdefault(ph, []).append(stats.get('p95_seconds', 0))
+          out = {'phases': {ph: {'p95_seconds': statistics.median(vs)} for ph, vs in phases.items()}}
+          json.dump(out, open('benchmark_results/latest.json', 'w'), indent=2)
+          print('Median-of-5 P95:')
+          for ph, s in out['phases'].items():
+              print(f'  {ph}: {s[\"p95_seconds\"]:.2f}s')
+          "
+
+      - name: Compare against baseline
+        run: |
+          PYTHONPATH=src poetry run python -c "
+          import json, sys
+          baseline = json.load(open('benchmark_results/baseline.json'))
+          latest = json.load(open('benchmark_results/latest.json'))
+          fail = False
+          THRESHOLD = 1.25  # 25% over baseline allowed
+          for ph, latest_stats in latest['phases'].items():
+              base = baseline['phases'].get(ph, {}).get('p95_seconds')
+              cur = latest_stats['p95_seconds']
+              if base is None:
+                  print(f'  [new] {ph}: {cur:.2f}s (no baseline)')
+                  continue
+              ratio = cur / max(base, 0.001)
+              status = 'OK' if ratio <= THRESHOLD else 'REGRESSION'
+              print(f'  [{status}] {ph}: {cur:.2f}s vs baseline {base:.2f}s (×{ratio:.2f})')
+              if ratio > THRESHOLD:
+                  fail = True
+          if fail:
+              print('::error::Benchmark regression > 25%. Investigate per docs/runbooks/benchmark_regression.md')
+              sys.exit(1)
+          "
+
+      - name: Upload latest results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: benchmark_results/run_*.json

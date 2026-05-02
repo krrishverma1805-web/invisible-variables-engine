@@ -258,3 +258,82 @@ def no_signal_csv_bytes() -> bytes:
 
     m = importlib.import_module("tests.fixtures.demo_csv_files")
     return m.make_pure_noise(n=150, seed=99)
+
+
+# ---------------------------------------------------------------------------
+# LLM client fixture (mock Groq) — Phase A
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def mock_groq_responses() -> dict[str, str]:
+    """Default canned responses keyed by a substring of the user prompt.
+
+    Override per-test by replacing this fixture; ``mock_groq_client``
+    resolves the response by checking each key as a substring of the
+    user prompt and falling back to ``"default"``.
+    """
+    return {
+        "lv_explanation": (
+            "Records in the high-value segment showed a 0.42 effect size deviation "
+            "(p=0.001), with stability 0.85 across resamples."
+        ),
+        "experiment_headline": "Top finding: 0.42 effect on the high-value segment.",
+        "experiment_narrative": (
+            "We analyzed the dataset's residuals and found patterns worth exploring. "
+            "The strongest finding showed a 0.42 effect.\n\n"
+            "These observations are associated with specific segments and are worth "
+            "investigating further.\n\n"
+            "Consider validating with operational teams and tracking the segment over time."
+        ),
+        "default": "Pattern observed with effect 0.42 (p=0.001).",
+    }
+
+
+@pytest.fixture
+def mock_groq_client(mock_groq_responses: dict[str, str]):
+    """Async-mocked GroqClient.
+
+    Resolves the response by substring-matching the user prompt against the
+    keys of ``mock_groq_responses``. Latency is configurable per test by
+    setting ``mock_groq_client.latency_ms`` before the call.
+    """
+    import asyncio
+
+    from ive.llm.client import ChatResult
+
+    client = AsyncMock()
+    client.latency_ms = 5
+
+    async def _chat(*, system: str, user: str, max_tokens=None, temperature=None, request_id=None):
+        text = mock_groq_responses["default"]
+        for key, response in mock_groq_responses.items():
+            if key == "default":
+                continue
+            if key in user:
+                text = response
+                break
+        await asyncio.sleep(client.latency_ms / 1000)
+        return ChatResult(
+            text=text,
+            prompt_tokens=len(system) // 4 + len(user) // 4,
+            completion_tokens=len(text) // 4,
+            model="llama-3.3-70b-versatile",
+            finish_reason="stop",
+            latency_ms=client.latency_ms,
+            request_id=request_id or "test-request",
+        )
+
+    client.chat = _chat
+    client.aclose = AsyncMock(return_value=None)
+    return client
+
+
+@pytest.fixture
+def fake_redis():
+    """In-memory async Redis-compatible client for cache / breaker tests."""
+    try:
+        import fakeredis.aioredis
+    except ImportError:  # pragma: no cover - dev-only dep
+        pytest.skip("fakeredis not installed")
+    return fakeredis.aioredis.FakeRedis(decode_responses=False)

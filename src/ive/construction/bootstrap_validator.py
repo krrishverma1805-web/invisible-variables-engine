@@ -99,7 +99,12 @@ _REJECTION_PRIORITY: list[str] = [
 
 @dataclass
 class BootstrapResult:
-    """Legacy output of bootstrap validation for a single candidate."""
+    """Legacy output of bootstrap validation for a single candidate.
+
+    Phase B4 adds ``effect_size_ci_lower`` / ``effect_size_ci_upper`` /
+    ``effect_size_ci_method`` so consumers can read the BCa-or-percentile
+    confidence interval alongside the legacy ``ci_lower`` / ``ci_upper``.
+    """
 
     mean_effect_size: float = 0.0
     std_effect_size: float = 0.0
@@ -108,6 +113,9 @@ class BootstrapResult:
     p_value: float = 1.0
     stability_score: float = 0.0
     n_iterations: int = 1000
+    effect_size_ci_lower: float | None = None
+    effect_size_ci_upper: float | None = None
+    effect_size_ci_method: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -196,11 +204,26 @@ class BootstrapValidator:
         """
         # Resolve mode-sensitive defaults
         defaults = _MODE_DEFAULTS.get(self.mode, _MODE_DEFAULTS["production"])
-        eff_threshold = (
-            stability_threshold
-            if stability_threshold is not None
-            else defaults["stability_threshold"]
-        )
+
+        # Phase B6: pull threshold from the calibrated table when the
+        # caller didn't supply an explicit override. ``min_presence_rate``
+        # falls back to the legacy fixed values when the JSON is absent.
+        if stability_threshold is None:
+            from ive.construction.stability_calibration import min_presence_rate
+
+            n_rows_for_calibration = (
+                int(original_X.shape[0]) if original_X is not None else 0
+            )
+            eff_threshold = float(
+                min_presence_rate(
+                    n_rows=n_rows_for_calibration,
+                    mode=self.mode,
+                    problem_type="regression",  # B6 grid; classification arrives in §102
+                    strategy="table",
+                )
+            )
+        else:
+            eff_threshold = stability_threshold
         eff_variance = (
             min_variance_threshold
             if min_variance_threshold is not None
@@ -347,6 +370,20 @@ class BootstrapValidator:
         all_variances: list[float] = []
         all_ranges: list[float] = []
         all_supports: list[float] = []
+        # Phase B4: per-resample effect-size proxy.
+        #
+        # The validator can't see the residual stream — it only sees the
+        # construction-rule output — so the natural Cohen's-d on residuals
+        # lives in subgroup_discovery / Phase 3, not here. The proxy we
+        # surface is the **standardized score range** of the construction
+        # rule: ``(max - min) / std``. It captures how strongly the rule
+        # discriminates rows in this resample.
+        #
+        # Edge cases:
+        #   - All-inactive / all-active scores → variance is 0 → NaN.
+        #   - Constant scores (all-zeros or all-ones) → NaN.
+        # NaN entries are filtered before CI estimation.
+        per_resample_effect: list[float] = []
 
         for iter_idx in range(n_iterations):
             # Bootstrap resample — same number of rows, with replacement
@@ -385,6 +422,19 @@ class BootstrapValidator:
             all_ranges.append(score_range)
             all_supports.append(support_rate)
 
+            # Phase B4: collect per-resample effect-size proxy.
+            # Standardized score range = (max - min) / std. Works
+            # uniformly for both binary indicator scores (where Cohen's d
+            # between groups is undefined because each group is constant)
+            # and continuous cluster-distance scores. NaN when scores
+            # are constant (all-zero / all-one rules) — filtered before
+            # CI estimation.
+            score_std = float(np.std(scores_boot, ddof=1)) if len(scores_boot) > 1 else 0.0
+            if score_std > 0 and np.isfinite(score_std) and score_range > 0:
+                per_resample_effect.append(score_range / score_std)
+            else:
+                per_resample_effect.append(float("nan"))
+
             gate_variance = variance > eff_variance
             gate_range = score_range > eff_range
             gate_support_low = support_rate >= eff_min_support
@@ -405,6 +455,29 @@ class BootstrapValidator:
 
         presence_rate = survived_count / max(1, n_iterations)
         status = "validated" if presence_rate >= eff_threshold else "rejected"
+
+        # Phase B4: BCa-or-percentile CI on the bootstrap effect-size
+        # distribution. The validator runs without sample-data context
+        # (the construction rule, not the original X, is what's bootstrapped),
+        # so we compute the percentile-method CI here. Real BCa with
+        # jackknife acceleration on the original data is a follow-up
+        # (Phase B.5) — we surface ``effect_size_ci_method='percentile'``
+        # so consumers can verify provenance.
+        from ive.construction.bca_bootstrap import bca_confidence_interval
+
+        eff_arr = np.array(per_resample_effect, dtype=float)
+        ci = bca_confidence_interval(eff_arr)
+        finite_eff = eff_arr[np.isfinite(eff_arr)]
+        candidate["effect_size_ci_lower"] = (
+            None if not np.isfinite(ci.lower) else float(ci.lower)
+        )
+        candidate["effect_size_ci_upper"] = (
+            None if not np.isfinite(ci.upper) else float(ci.upper)
+        )
+        candidate["effect_size_ci_method"] = ci.method
+        candidate["effect_size_mean"] = (
+            float(np.mean(finite_eff)) if finite_eff.size else None
+        )
 
         candidate["bootstrap_presence_rate"] = presence_rate
         candidate["stability_score"] = presence_rate

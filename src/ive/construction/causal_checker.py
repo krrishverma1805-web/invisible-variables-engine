@@ -9,6 +9,10 @@ Checks performed:
     1. Reverse causality: Does the LV proxy a consequence of Y rather than a cause?
     2. Confounding proxy: Is the LV merely a proxy for an already-included feature?
     3. Temporal ordering: If time columns exist, does the LV precede Y?
+    4. Doubly robust orthogonal-effect check (plan §C1): residualize Y on
+       controls and T on controls, then estimate the orthogonal effect.
+       If the orthogonal effect is materially smaller than the raw effect,
+       flag the candidate as ``confounded_by_dml``.
 """
 
 from __future__ import annotations
@@ -18,8 +22,17 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import structlog
+from sklearn.linear_model import Ridge
+from sklearn.model_selection import KFold
 
 log = structlog.get_logger(__name__)
+
+
+# Plan §C1 / §48: hand-rolled orthogonalization, no econml.
+DML_KFOLDS = 2
+DML_MIN_ROWS = 60         # need enough data for cross-fit + residual regression
+DML_MIN_RAW_EFFECT = 0.05 # below this, raw effect is too small to even bother
+DML_CONFOUND_RATIO = 0.3  # |theta_dml| / |theta_raw| below this -> confounded
 
 
 def _get_attr(candidate: dict[str, Any], key: str, default: Any = None) -> Any:
@@ -98,6 +111,33 @@ class CausalChecker:
                         "Candidate feature highly correlated with target -- possible reverse causality"
                     )
 
+            # Check 3: DML orthogonal-effect check (plan §C1).
+            # Only attempt on numeric candidate columns with enough rows.
+            dml_result: dict[str, float] | None = None
+            if (
+                candidate_col
+                and target_column
+                and candidate_col in df.columns
+                and pd.api.types.is_numeric_dtype(df[candidate_col])
+            ):
+                dml_result = self._dml_orthogonal_effect(
+                    df=df,
+                    treatment_col=candidate_col,
+                    target_column=target_column,
+                    other_columns=[
+                        c for c in all_feature_cols if c != candidate_col
+                    ],
+                )
+                if dml_result and dml_result.get("confounded"):
+                    confidence_penalty *= 0.5
+                    warnings.append(
+                        "Orthogonalized effect ({theta_dml:.3f}) is materially smaller than "
+                        "raw effect ({theta_raw:.3f}) -- confounded_by_dml".format(
+                            theta_dml=dml_result["theta_dml"],
+                            theta_raw=dml_result["theta_raw"],
+                        )
+                    )
+
             # Apply penalty and warnings
             if isinstance(candidate, dict):
                 current_score = candidate.get(
@@ -106,12 +146,16 @@ class CausalChecker:
                 candidate["importance_score"] = float(current_score) * confidence_penalty
                 candidate["causal_warnings"] = warnings
                 candidate["causal_confidence_penalty"] = confidence_penalty
+                if dml_result is not None:
+                    candidate["dml_diagnostic"] = dml_result
             else:
                 if hasattr(candidate, "importance_score"):
                     candidate.importance_score *= confidence_penalty  # type: ignore[attr-defined]
                 if hasattr(candidate, "confidence_score"):
                     candidate.confidence_score *= confidence_penalty
                 candidate.causal_warnings = warnings  # type: ignore[attr-defined]
+                if dml_result is not None:
+                    candidate.dml_diagnostic = dml_result  # type: ignore[attr-defined]
 
         n_penalized = sum(
             1
@@ -206,6 +250,109 @@ class CausalChecker:
             return False
         except Exception:
             return False
+
+    def _dml_orthogonal_effect(
+        self,
+        *,
+        df: pd.DataFrame,
+        treatment_col: str,
+        target_column: str,
+        other_columns: list[str],
+    ) -> dict[str, float] | None:
+        """
+        Hand-rolled double-ML orthogonalization (plan §C1, §48).
+
+        Given:
+            T = df[treatment_col]   (the candidate's defining feature)
+            Y = df[target_column]
+            X = df[other numeric features]
+
+        We estimate:
+            * raw effect (theta_raw): OLS slope of T on Y, no controls.
+            * orthogonal effect (theta_dml):
+                  - Cross-fit Ridge nuisance models g(X)≈Y and m(X)≈T.
+                  - Take residuals Y_resid = Y - g(X), T_resid = T - m(X).
+                  - theta_dml = sum(T_resid * Y_resid) / sum(T_resid**2).
+
+        Heuristic confound flag: ``|theta_dml| / |theta_raw| < 0.3`` while
+        ``|theta_raw| >= DML_MIN_RAW_EFFECT``. Returns ``None`` when the
+        check is infeasible (too few rows / no numeric controls / numeric
+        instability) so the caller can skip without penalising the candidate.
+        """
+        if not isinstance(df, pd.DataFrame):
+            return None
+
+        try:
+            t_raw = pd.to_numeric(df[treatment_col], errors="coerce")
+            y_raw = pd.to_numeric(df[target_column], errors="coerce")
+            numeric_controls = [
+                c
+                for c in other_columns
+                if c in df.columns and pd.api.types.is_numeric_dtype(df[c])
+            ]
+            if not numeric_controls:
+                return None
+
+            controls_df = df[numeric_controls].apply(
+                pd.to_numeric, errors="coerce"
+            )
+            mask = (
+                t_raw.notna()
+                & y_raw.notna()
+                & controls_df.notna().all(axis=1)
+            )
+            if int(mask.sum()) < DML_MIN_ROWS:
+                return None
+
+            t = t_raw[mask].to_numpy(dtype=float)
+            y = y_raw[mask].to_numpy(dtype=float)
+            x = controls_df.loc[mask].to_numpy(dtype=float)
+
+            # Need T to vary -- otherwise the regression is undefined.
+            if float(np.std(t)) < 1e-9 or float(np.std(y)) < 1e-9:
+                return None
+
+            # Raw effect: bivariate OLS slope of Y on T.
+            t_centered = t - t.mean()
+            y_centered = y - y.mean()
+            denom_raw = float(np.sum(t_centered ** 2))
+            if denom_raw < 1e-12:
+                return None
+            theta_raw = float(np.sum(t_centered * y_centered) / denom_raw)
+
+            # Cross-fit nuisance models. K=2 keeps cost low; this is a screen.
+            n = x.shape[0]
+            kf = KFold(n_splits=DML_KFOLDS, shuffle=True, random_state=42)
+            y_resid = np.zeros(n, dtype=float)
+            t_resid = np.zeros(n, dtype=float)
+            for train_idx, test_idx in kf.split(x):
+                if len(train_idx) < 5 or len(test_idx) < 5:
+                    return None
+                g = Ridge(alpha=1.0).fit(x[train_idx], y[train_idx])
+                m = Ridge(alpha=1.0).fit(x[train_idx], t[train_idx])
+                y_resid[test_idx] = y[test_idx] - g.predict(x[test_idx])
+                t_resid[test_idx] = t[test_idx] - m.predict(x[test_idx])
+
+            denom_dml = float(np.sum(t_resid ** 2))
+            if denom_dml < 1e-12:
+                return None
+            theta_dml = float(np.sum(t_resid * y_resid) / denom_dml)
+
+            confounded = (
+                abs(theta_raw) >= DML_MIN_RAW_EFFECT
+                and abs(theta_dml) / max(abs(theta_raw), 1e-9)
+                < DML_CONFOUND_RATIO
+            )
+            return {
+                "theta_raw": theta_raw,
+                "theta_dml": theta_dml,
+                "n_used": float(n),
+                "n_controls": float(x.shape[1]),
+                "confounded": float(confounded),
+            }
+        except Exception as exc:
+            log.debug("ive.causal_checker.dml_skipped", reason=str(exc))
+            return None
 
     def _is_confounding_proxy(
         self,

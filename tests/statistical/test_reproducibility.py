@@ -44,23 +44,34 @@ def test_bootstrap_stability_score_is_reproducible() -> None:
     BootstrapValidator with fixed seed should return the exact same
     stability_score across repeated calls.
 
-    TODO:
-        - Create a dummy LatentVariableCandidate
-        - Call BootstrapValidator(seed=42).validate(...) twice
-        - Assert stability_score is identical
+    Uses the current API: ``BootstrapValidator(seed=42).validate(X, candidates)``
+    where ``candidates`` is a list of dicts and the validator mutates each
+    in place with ``bootstrap_presence_rate`` and ``stability_score``.
     """
+    import copy
+
     import numpy as np
+    import pandas as pd
 
     from ive.construction.bootstrap_validator import BootstrapValidator
-    from ive.core.pipeline import LatentVariableCandidate
 
-    candidate = LatentVariableCandidate(rank=1, name="Test", effect_size=0.5)
-    X = np.random.default_rng(42).normal(0, 1, (100, 3))
-    y = np.random.default_rng(42).normal(0, 1, 100)
+    rng = np.random.default_rng(42)
+    feature = rng.normal(0, 1, 200)
+    target = feature * 0.6 + rng.normal(0, 0.5, 200)
+    X = pd.DataFrame({"feature": feature, "target": target})
 
-    validator = BootstrapValidator(n_iterations=100, seed=42)
-    result1 = validator.validate(candidate, X, y)
-    result2 = validator.validate(candidate, X, y)
+    base_candidate = {
+        "name": "Test",
+        "effect_size": 0.5,
+        "construction_rule": {"feature": "feature"},
+        "candidate_features": ["feature"],
+    }
 
-    assert result1.stability_score == result2.stability_score
-    assert result1.mean_effect_size == result2.mean_effect_size
+    cands_a = [copy.deepcopy(base_candidate)]
+    cands_b = [copy.deepcopy(base_candidate)]
+
+    BootstrapValidator(seed=42).validate(X, cands_a, n_iterations=20)
+    BootstrapValidator(seed=42).validate(X, cands_b, n_iterations=20)
+
+    assert cands_a[0]["stability_score"] == cands_b[0]["stability_score"]
+    assert cands_a[0]["bootstrap_presence_rate"] == cands_b[0]["bootstrap_presence_rate"]

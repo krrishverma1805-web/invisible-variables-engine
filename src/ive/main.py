@@ -126,6 +126,15 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         except ImportError:
             log.warning("ive.sentry.skipped", reason="sentry-sdk not installed")
 
+    # OpenTelemetry tracing (Phase C4 / plan §117 + §150) — opt-in.
+    if settings.enable_tracing:
+        try:
+            from ive.observability import install_tracing
+
+            install_tracing()
+        except Exception as exc:  # pragma: no cover - defensive
+            log.warning("ive.tracing.skipped", reason=str(exc))
+
     # Database — graceful degradation: if DB is unavailable, the app still
     # boots (health endpoint returns status="degraded").
     try:
@@ -203,6 +212,23 @@ def create_app() -> FastAPI:
     async def root() -> RedirectResponse:
         """Redirect root to the health check endpoint."""
         return RedirectResponse(url="/api/v1/health")
+
+    # ── Prometheus exporter (Phase C4) ────────────────────────────────────
+    if settings.enable_metrics:
+        from fastapi import Response
+
+        from ive.observability import get_registry
+
+        @app.get("/metrics", include_in_schema=False)
+        async def metrics() -> Response:
+            """Expose Prometheus-format metrics. Unauthenticated by design;
+            production deployments put network-level controls in front.
+            """
+            reg = get_registry()
+            return Response(
+                content=reg.expose(),
+                media_type=reg.content_type,
+            )
 
     return app
 

@@ -106,6 +106,8 @@ class VariableSynthesizer:
                 candidate = self._synthesize_cluster(pattern, X, idx)
             elif ptype == "interaction":
                 candidate = self._synthesize_interaction(pattern, X, idx)
+            elif ptype == "variance_regime":
+                candidate = self._synthesize_variance_regime(pattern, X, idx)
             else:
                 log.warning(
                     "ive.synthesizer.unknown_pattern_type",
@@ -411,6 +413,63 @@ class VariableSynthesizer:
             "initial_variance": float(np.var(scores)),
         }
 
+    # ------------------------------------------------------------------
+    # Variance-regime synthesis (Phase B8)
+    # ------------------------------------------------------------------
+
+    def _synthesize_variance_regime(
+        self,
+        pattern: dict[str, Any],
+        X: pd.DataFrame,
+        idx: int,
+    ) -> dict[str, Any] | None:
+        """Convert a variance-regime pattern to a binary indicator candidate.
+
+        The pattern's ``feature`` is the column whose conditional variance
+        is heteroscedastic. The synthesized indicator splits the column at
+        its median: rows in the high-variance half get score=1.
+
+        Args:
+            pattern: Pattern dict with ``feature`` and (optionally)
+                ``high_variance_threshold``.
+            X:       Feature DataFrame.
+            idx:     Pattern index for unique naming.
+
+        Returns:
+            Candidate dict, or None when the feature is missing.
+        """
+        feature = pattern.get("feature") or pattern.get("column_name")
+        if not feature or feature not in X.columns:
+            log.warning(
+                "ive.synthesizer.variance_regime.missing_feature",
+                feature=feature,
+                pattern_index=idx,
+            )
+            return None
+
+        col = pd.to_numeric(X[feature], errors="coerce")
+        # Threshold defaults to the median; the variance regime is "rows
+        # above the median have higher residual variance."
+        threshold = float(pattern.get("high_variance_threshold", col.median()))
+
+        scores = (col >= threshold).fillna(False).astype(np.float64).to_numpy()
+        rule = {
+            "feature": feature,
+            "high_variance_threshold": threshold,
+        }
+        name_safe = _sanitise_name(feature)
+        return {
+            "name": f"lv_variance_regime_{name_safe}_{idx}",
+            "pattern_type": "variance_regime",
+            "construction_rule": rule,
+            "effect_size": float(pattern.get("effect_size", 0.0)),
+            "p_value": float(pattern.get("p_value", 1.0)),
+            "sample_count": int(np.sum(np.isfinite(col.to_numpy()))),
+            "initial_support_rate": float(np.sum(scores > 0) / max(1, len(scores))),
+            "initial_score_range": float(np.max(scores) - np.min(scores)),
+            "initial_variance": float(np.var(scores)),
+        }
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -597,12 +656,53 @@ def apply_construction_rule(
     if pattern_type == "interaction":
         return _apply_interaction_rule(rule, X, n)
 
+    if pattern_type == "variance_regime":
+        return _apply_variance_regime_rule(rule, X, n)
+
     # Unrecognised pattern type → zeros
     log.warning(
         "ive.apply_rule.unknown_pattern_type",
         pattern_type=pattern_type,
     )
     return np.zeros(n, dtype=np.float64)
+
+
+def _apply_variance_regime_rule(
+    rule: dict[str, Any],
+    X: pd.DataFrame,
+    n: int,
+) -> np.ndarray[Any, Any]:
+    """Apply a variance-regime construction rule.
+
+    Plan reference: §B8 + §99. The rule shape stores ``feature`` plus a
+    ``high_variance_threshold`` quantile cut-point on that feature. The
+    synthesized score is a 0/1 indicator: row is in the high-variance
+    regime when ``X[feature] >= threshold``.
+
+    Args:
+        rule: Construction rule with ``feature`` and ``high_variance_threshold``.
+        X:    Feature DataFrame.
+        n:    Number of rows in X.
+
+    Returns:
+        1-D float64 array of 0/1 scores.
+    """
+    feature = rule.get("feature", "") or rule.get("column", "")
+    threshold = rule.get("high_variance_threshold", rule.get("threshold"))
+
+    if not feature or threshold is None or feature not in X.columns:
+        log.debug(
+            "ive.apply_rule.variance_regime.missing_field",
+            feature=feature,
+            has_threshold=threshold is not None,
+        )
+        return np.zeros(n, dtype=np.float64)
+
+    col = pd.to_numeric(X[feature], errors="coerce").to_numpy(dtype=float)
+    out = np.zeros(n, dtype=np.float64)
+    mask = np.isfinite(col) & (col >= float(threshold))
+    out[mask] = 1.0
+    return out
 
 
 def _apply_subgroup_rule(

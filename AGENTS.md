@@ -265,12 +265,14 @@ invisible-variables-engine/
 │   │   ├── middleware/             ← auth, error, rate limit
 │   │   ├── v1/                     ← versioned routes + schemas
 │   │   └── websocket/              ← live progress streaming
+│   ├── auth/                       ← scopes, key utils, egress checks (PR-2/3)
 │   ├── config.py                   ← Pydantic Settings master
 │   ├── construction/               ← Phase 4
 │   ├── core/                       ← pipeline orchestrator
 │   ├── data/                       ← Phase 1
 │   ├── db/                         ← SQLAlchemy models + repos
 │   ├── detection/                  ← Phase 3
+│   ├── llm/                        ← Groq / OpenAI-compat enrichment (PR-1)
 │   ├── main.py                     ← FastAPI factory
 │   ├── models/                     ← Phase 2 (ML models)
 │   ├── storage/                    ← artifact persistence
@@ -335,7 +337,7 @@ invisible-variables-engine/
 FastAPI app factory. Builds the application object, attaches `auth`, `error_handler`, and `rate_limit` middleware, mounts the v1 router under `/api/v1`, configures structlog, and registers Sentry if `SENTRY_DSN` is set.
 
 ### 7.2 `src/ive/config.py`
-Single source of truth for runtime configuration. Built from seven Pydantic-Settings sub-classes (`DatabaseSettings`, `RedisSettings`, `CelerySettings`, `SecuritySettings`, `MLSettings`, `DetectionSettings`, `StorageSettings`) merged into one `Settings` class via multiple inheritance.
+Single source of truth for runtime configuration. Built from eight Pydantic-Settings sub-classes (`DatabaseSettings`, `RedisSettings`, `CelerySettings`, `SecuritySettings`, `MLSettings`, `DetectionSettings`, `LLMSettings`, `StorageSettings`) merged into one `Settings` class via multiple inheritance. `LLMSettings` carries Groq / OpenAI-compatible client config plus cache, breaker, and budget controls (added in PR-1; off by default until staging soak).
 
 Key behaviors:
 - Resolution order: env vars → `.env` → field defaults.
@@ -415,6 +417,9 @@ All detectors return a uniform `Pattern` shape with `effect_size`, `coverage`, `
 - **`repositories/dataset_repo.py`** — `create / get_by_id / search_by_name / get_all / count / update / delete`.
 - **`repositories/experiment_repo.py`** — adds `mark_started / mark_completed / mark_failed / mark_cancelled / update_progress / add_trained_model / add_residuals_batch / add_error_patterns_batch / get_error_patterns / get_events`.
 - **`repositories/latent_variable_repo.py`** — `bulk_create / get_by_experiment / get_by_id / filter by status`.
+- **`repositories/api_key_repo.py`** — multi-user auth: `create / get_by_hash / list / revoke / record_usage` (PR-2).
+- **`repositories/dataset_column_metadata_repo.py`** — per-column sensitivity: `list_for_dataset / bulk_create_default / bulk_set / public_column_names` (PR-3).
+- **`repositories/llm_explanation_repo.py`** — LLM column writers: `set_lv_explanation / bulk_mark_lvs_disabled / set_experiment_explanation / mark_experiment_disabled` (PR-4).
 
 ### 7.10 `src/ive/storage/`
 - **`artifact_store.py`** — `ArtifactStore` factory + `LocalArtifactStore` (aiofiles) + `S3ArtifactStore` (optional, requires `boto3` extra). Methods: `save_file / load_file / delete_file`.
@@ -428,8 +433,33 @@ All detectors return a uniform `Pattern` shape with `effect_size`, `coverage`, `
 ### 7.12 `src/ive/workers/`
 - **`celery_app.py`** — Celery factory: broker/result backend wired from settings; queues `default`, `analysis`, `high_priority`; JSON serializer; result TTL = `celery_result_expires`.
 - **`tasks.py`** — see §10.
+- **`llm_enrichment.py`** — async core of `generate_llm_explanations`. Flag-off short-circuits to mark every LV `disabled`; flag-on builds an `httpx.AsyncClient` + best-effort Redis cache + breaker, runs sem-bounded per-LV gather through `generate_with_fallback`, then experiment-level headline + narrative. Cancel-event polled at LV boundaries (PR-4).
 
-### 7.13 `scripts/`
+### 7.13 `src/ive/llm/`
+The LLM enrichment package — Groq / OpenAI-compatible. **Off by default** (`LLM_EXPLANATIONS_ENABLED=false`); when on, post-processes pipeline output to produce business-readable prose with strict hallucination guardrails and rule-based fallback. Added in PR-1.
+
+| Module | Responsibility |
+|---|---|
+| `client.py` | `GroqClient` async chat-completions wrapper. Retry with backoff on 429/5xx, `Retry-After` honored. Distinguishes `LLMUnavailable` / `LLMBadRequest` / `LLMAuthError` so the breaker only counts service-health failures. |
+| `prompts.py` | Versioned `(name, version)` template registry. Five templates: `lv_explanation`, `pattern_summary`, `experiment_headline`, `experiment_narrative`, `recommendations`. `template_sha()` feeds the cache key so structural template edits auto-invalidate. |
+| `validators.py` | `composite_validate()` chain: length sanity → injection-echo → banned phrases → numeric grounding (±2% tolerance, pairwise derivations). `sanitize_user_input()` strips injection markers + truncates free-text. |
+| `cache.py` | `RedisLLMCache` with per-entity index sets so dataset/experiment delete cascades to cache keys. |
+| `circuit_breaker.py` | Redis-backed consecutive-failure counter with cooldown TTL. |
+| `fallback.py` | `generate_with_fallback(...)` orchestrator: flag-check → breaker → cache → client → validate → cache.set, with graceful degradation on every failure path. |
+| `payloads.py` | `build_lv_payload` + `build_experiment_payload` — egress-aware fact extraction; non-public columns never appear in the output. |
+| `rule_based.py` | Adapters wrapping `ExplanationGenerator` into the `Callable[[], str]` shape `generate_with_fallback` expects. |
+| `types.py` | Pydantic models: `GenerationRequest`, `GenerationResult`, `ValidationReport`. |
+
+### 7.14 `src/ive/auth/`
+Multi-user auth + scopes + LLM data-egress checks. Added in PR-2 + PR-3.
+
+| Module | Responsibility |
+|---|---|
+| `scopes.py` | `Scope` enum (`read | write | admin`), `AuthContext` dataclass, `require_scope(...)` FastAPI dependency. |
+| `utils.py` | `generate_api_key()`, `hash_api_key()` (bcrypt). |
+| `egress.py` | `evaluate_lv_egress(referenced, public)` — binary public/non-public sensitivity gate. Blocks LVs whose construction rule references *any* non-public column. `filter_payload_columns()` is defense-in-depth. |
+
+### 7.15 `scripts/`
 | Script                          | Purpose                                                          |
 | ------------------------------- | ---------------------------------------------------------------- |
 | `generate_synthetic_data.py`    | Build synthetic regression/classification CSVs.                  |
@@ -454,13 +484,15 @@ All endpoints are mounted under `/api/v1`. Authentication: `X-API-Key: <key>` (d
 | GET    | `/health/ready`       | Readiness — 200 only if Postgres + Redis reachable; 503 otherwise.   |
 
 ### 8.2 Datasets — [`endpoints/datasets.py`](src/ive/api/v1/endpoints/datasets.py)
-| Method | Path                              | Purpose                                                       |
-| ------ | --------------------------------- | ------------------------------------------------------------- |
-| POST   | `/datasets/`                      | Multipart upload (CSV + `target_column`). Validates, ingests, profiles, returns `DatasetResponse`. |
-| GET    | `/datasets/`                      | List datasets (paginated, optional `?name=`).                 |
-| GET    | `/datasets/{dataset_id}`          | Full detail incl. schema and column info.                     |
-| GET    | `/datasets/{dataset_id}/profile`  | Stats profile, correlations, quality score.                   |
-| DELETE | `/datasets/{dataset_id}`          | Delete row + artifact file (204).                             |
+| Method | Path                                          | Purpose                                                       |
+| ------ | --------------------------------------------- | ------------------------------------------------------------- |
+| POST   | `/datasets/`                                  | Multipart upload (CSV + `target_column`). Validates, ingests, profiles, **seeds per-column sensitivity rows at `non_public`** (PR-3), returns `DatasetResponse`. |
+| GET    | `/datasets/`                                  | List datasets (paginated, optional `?name=`).                 |
+| GET    | `/datasets/{dataset_id}`                      | Full detail incl. schema and column info.                     |
+| GET    | `/datasets/{dataset_id}/profile`              | Stats profile, correlations, quality score.                   |
+| GET    | `/datasets/{dataset_id}/columns/`             | List per-column sensitivity (read scope; PR-3).               |
+| PUT    | `/datasets/{dataset_id}/columns/`             | Bulk-update column sensitivity (write scope; PR-3).           |
+| DELETE | `/datasets/{dataset_id}`                      | Delete row + artifact file (204). Cascades to column metadata + experiments. |
 
 ### 8.3 Experiments — [`endpoints/experiments.py`](src/ive/api/v1/endpoints/experiments.py)
 | Method | Path                                                       | Purpose                                                      |
@@ -490,24 +522,52 @@ All endpoints are mounted under `/api/v1`. Authentication: `X-API-Key: <key>` (d
 ### 8.5 WebSocket
 - `WS /api/v1/ws/progress/{experiment_id}` — real-time progress events. Sends `{stage, percentage, event_type, payload}` as the worker emits events.
 
+### 8.6 API Keys (admin scope) — [`endpoints/api_keys.py`](src/ive/api/v1/endpoints/api_keys.py)
+Multi-user auth admin surface. Added in PR-2.
+
+| Method | Path                          | Purpose                                                                  |
+| ------ | ----------------------------- | ------------------------------------------------------------------------ |
+| POST   | `/api-keys/`                  | Create a new API key with scopes; returns the raw key **once** (the hash is what's persisted). |
+| GET    | `/api-keys/`                  | List existing keys (admin scope only).                                   |
+| DELETE | `/api-keys/{api_key_id}`      | Revoke (sets `is_active=false`).                                         |
+
+### 8.7 LLM-explanation status fields (cross-cutting)
+Added in PR-5: every endpoint that returns an explanation also returns `explanation_source: "llm"|"rule_based"`, `llm_explanation_pending: bool`, `llm_explanation_status: "pending"|"ready"|"failed"|"disabled"`. See `docs/RESPONSE_CONTRACT.md` §4 for the full state table.
+
+Affected endpoints:
+- `GET /experiments/{id}/summary`
+- `GET /experiments/{id}/latent-variables`
+- `GET /latent-variables/`
+- `GET /latent-variables/{id}`
+
 ---
 
 ## 9. Database Schema
 
 Defined in [`src/ive/db/models.py`](src/ive/db/models.py). All tables use UUID primary keys, `created_at`/`updated_at` timestamps, and proper FKs with cascade rules.
 
-| Table              | Class             | Purpose                                                                                  |
-| ------------------ | ----------------- | ---------------------------------------------------------------------------------------- |
-| `datasets`         | `Dataset`         | Uploaded CSV/Parquet metadata: file_path, checksum, schema_json, row/col counts, target_column. |
-| `experiments`      | `Experiment`      | Analysis run lifecycle: status, progress_percentage, current_stage, config (JSONB), uplift metrics. |
-| `trained_models`   | `TrainedModel`    | Per-fold model metrics: model_type, fold_number, train_score, val_score, hyperparams.    |
-| `residuals`        | `Residual`        | OOF predictions and residuals: row_index, predicted_value, residual_value, fold.         |
-| `error_patterns`   | `ErrorPattern`    | Detected patterns: pattern_type (subgroup/cluster/interaction/temporal), effect_size, p_value, p_value_adjusted, definition (JSONB). |
-| `latent_variables` | `LatentVariable`  | Constructed LVs: construction_rule (JSONB), bootstrap_presence_rate, status (validated/rejected/pending), rejection_reason, confidence_score, explanation. |
-| `experiment_events`| `ExperimentEvent` | Append-only audit log: phase, event_type, payload (JSONB), timestamp.                    |
-| `api_keys`         | `APIKey`          | Hashed API keys with permissions and rate limits (server-side mgmt only).                |
+| Table                       | Class                     | Purpose                                                                                  |
+| --------------------------- | ------------------------- | ---------------------------------------------------------------------------------------- |
+| `datasets`                  | `Dataset`                 | Uploaded CSV/Parquet metadata: file_path, checksum, schema_json, row/col counts, target_column. |
+| `experiments`               | `Experiment`              | Analysis run lifecycle: status, progress_percentage, current_stage, config (JSONB), uplift metrics. **+ LLM cols** (`llm_headline`, `llm_narrative`, `llm_recommendations`, `llm_explanation_status`, `llm_task_id`, etc. — PR-1). |
+| `trained_models`            | `TrainedModel`            | Per-fold model metrics: model_type, fold_number, train_score, val_score, hyperparams.    |
+| `residuals`                 | `Residual`                | OOF predictions and residuals: row_index, predicted_value, residual_value, fold.         |
+| `error_patterns`            | `ErrorPattern`            | Detected patterns: pattern_type (subgroup/cluster/interaction/temporal), effect_size, p_value, p_value_adjusted, definition (JSONB). |
+| `latent_variables`          | `LatentVariable`          | Constructed LVs: construction_rule (JSONB), bootstrap_presence_rate, status, rejection_reason, confidence_score, explanation. **+ LLM cols** (`llm_explanation`, `llm_explanation_status`, etc. — PR-1). |
+| `experiment_events`         | `ExperimentEvent`         | Append-only audit log: phase, event_type, payload (JSONB), timestamp.                    |
+| `api_keys`                  | `APIKey`                  | Hashed API keys with scopes and rate limits. Multi-user model in PR-2.                  |
+| `auth_audit_log`            | `AuthAuditLog`            | Per-request auth audit: api_key_id, route, status, IP, timestamp (PR-2).                |
+| `dataset_column_metadata`   | `DatasetColumnMetadata`   | Per-column sensitivity (`public` / `non_public`). Default `non_public` on upload (PR-3). |
+| `explanation_feedback`      | `ExplanationFeedback`     | Thumbs-up/down on generated explanations; carries `prompt_version` + `model_version` (PR-1). |
 
 Initial migration: [`alembic/versions/20260302_1958-c25bd1018dab_initial_schema.py`](alembic/versions/20260302_1958-c25bd1018dab_initial_schema.py).
+
+**Phase A migrations** (per `docs/RESPONSE_CONTRACT.md` §10):
+- `add_lv_llm_columns` — code-first
+- `add_experiment_llm_columns` — code-first
+- `add_explanation_feedback_table` — code-first
+- `add_dataset_column_metadata` — schema-first
+- `extend_api_keys_for_multi_user` + `add_auth_audit_log` — same-release
 
 ---
 
@@ -517,9 +577,10 @@ Initial migration: [`alembic/versions/20260302_1958-c25bd1018dab_initial_schema.
 
 | Task                                    | Trigger                     | Behavior                                                                                                    |
 | --------------------------------------- | --------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `run_experiment(experiment_id, config)` | `POST /experiments/`        | Bridges sync Celery → async `IVEPipeline` via `asyncio.run()`. Updates progress, persists artifacts, returns `{n_patterns, n_validated, elapsed_seconds}`. |
+| `run_experiment(experiment_id, config)` | `POST /experiments/`        | Bridges sync Celery → async `IVEPipeline` via `asyncio.run()`. Updates progress, persists artifacts. **Chains `generate_llm_explanations` on success** (PR-4). Returns `{n_patterns, n_validated, elapsed_seconds}`. |
 | `profile_dataset(dataset_id, file_path)`| Post-upload (auto)          | Loads file, runs `DataProfiler`, merges profile into `schema_json`.                                         |
 | `cancel_experiment(task_id, exp_id)`    | `POST /experiments/{id}/cancel` | Revokes the Celery task with SIGTERM, marks experiment `cancelled`.                                     |
+| `generate_llm_explanations(experiment_id)` | Chained from `run_experiment` | `AbortableTask`-based; polls `is_aborted()` between LVs. Flag-off → mark every LV `disabled`. Flag-on → sem-bounded gather through `generate_with_fallback`, then experiment-level headline + narrative. Egress-checked per LV (PR-4). |
 | `health_check_task()`                   | `/health/ready`             | Lightweight echo to verify worker responsiveness.                                                            |
 
 Queues: `default`, `analysis`, `high_priority`. Run a worker with all three: `celery -A ive.workers.celery_app worker -Q default,analysis,high_priority`.
@@ -543,6 +604,7 @@ Queues: `default`, `analysis`, `high_priority`. Run a worker with all three: `ce
 | Detection                | `DEMO_MODE`, `DEFAULT_STABILITY_THRESHOLD`, `DEMO_STABILITY_THRESHOLD`, `DEFAULT_MIN_EFFECT_SIZE`, `DEFAULT_MIN_SUBGROUP_SIZE`, `DEFAULT_MIN_VARIANCE_THRESHOLD` |
 | Storage                  | `ARTIFACT_STORE_TYPE` (`local` / `s3`), `ARTIFACT_BASE_DIR`, `S3_BUCKET_NAME`, `AWS_*`, `S3_ENDPOINT_URL`, `MAX_UPLOAD_SIZE_MB` |
 | Observability            | `SENTRY_DSN`, `ENABLE_METRICS`                                                                          |
+| LLM (Groq / OpenAI-compat) | `LLM_EXPLANATIONS_ENABLED` (off by default), `LLM_SELF_HOSTED_MODE`, `GROQ_API_KEY`, `GROQ_MODEL`, `GROQ_BASE_URL`, `GROQ_TIMEOUT_SECONDS`, `GROQ_MAX_RETRIES`, `GROQ_MAX_OUTPUT_TOKENS`, `GROQ_TEMPERATURE` (default 0.0), `GROQ_MAX_CONCURRENCY`, `LLM_CACHE_TTL_SECONDS`, `LLM_REDIS_DB` (default 2 — separate from broker/results), `LLM_PROMPT_VERSION`, `LLM_CIRCUIT_BREAKER_THRESHOLD`, `LLM_CIRCUIT_BREAKER_COOLDOWN_SECONDS`, `LLM_VALIDATION_RETRY_MAX`, `LLM_BATCH_SIZE_LVS`, `LLM_BATCH_TOKEN_SAFETY_THRESHOLD`, `LLM_DAILY_TOKEN_BUDGET`, `LLM_PER_EXPERIMENT_TOKEN_CAP`, `LLM_DATA_EGRESS_DEFAULT` (default `deny`), `LLM_VALIDATOR_PROFILE` |
 
 ### Demo vs Production thresholds (controlled by `analysis_mode`)
 
@@ -568,12 +630,13 @@ Entry: [`streamlit_app/app.py`](streamlit_app/app.py). Built around the multi-pa
 | `pages/01_upload.py`                    | CSV uploader, target column selector, optional time column, data preview, ingest trigger.                     |
 | `pages/02_configure.py`                 | Pick dataset, set CV folds, test size, model types, analysis mode (demo/production), bootstrap iterations.    |
 | `pages/03_monitor.py`                   | Real-time progress bar, stage display, WebSocket subscription, lifecycle event log.                           |
-| `pages/04_results.py`                   | Patterns + LVs with stability/importance, business explanations, rejection reasons, CSV download.             |
+| `pages/04_results.py`                   | Patterns + LVs with stability/importance, business explanations, rejection reasons, CSV download. **AI-assisted badges + dataset-level sensitivity banner** (PR-6). |
 | `pages/05_compare.py`                   | Pick 2+ experiments → config diff, pattern overlap, LV overlap (common / unique-A / unique-B).                |
+| `pages/06_dataset_settings.py`          | Per-column sensitivity editor: bulk actions, diff preview, save (PR-7).                                       |
 
 ### Components
 - `components/sidebar.py` — global nav + API connectivity badge.
-- `components/theme.py` — Carbon Design System theming (dark by default).
+- `components/theme.py` — Carbon Design System theming (dark by default). Adds `explanation_source_badge()` (PR-6) for AI-assisted / pending / failed / disabled states.
 - `components/charts.py` — Plotly visualisations (effect-size hist, p-value hist, LV importance, timeline).
 - `components/widgets.py` — metric cards, status badges, spinners, data tables.
 
@@ -684,6 +747,7 @@ Hooks: `ruff` (lint + format), `mypy`. Install: `pre-commit install`.
 | `runbook.md`                      | Operational runbook (incident response, rollback).             |
 | `testing.md`                      | Testing strategy and tier definitions.                         |
 | `token-optimization-guide.md`     | Context-window optimization for agent workflows.               |
+| `RESPONSE_CONTRACT.md`            | **Authoritative API/data contract** — reproducibility, FPR, egress, deploy ordering, sensitivity model, model migration. Read first before trusting an IVE number. (PR-9) |
 
 The `.gsd/` and `.agent/` directories contain GSD methodology artifacts (project state, skills, workflows, templates) — see `PROJECT_RULES.md` and `GSD-STYLE.md` for the methodology itself.
 
@@ -889,4 +953,25 @@ EVENT LOG      : experiment_events table (independent psycopg2 transaction)
 
 ---
 
-*Last updated: 2026-04-26. When you make architectural or interface changes, update the relevant section AND the [File Inventory Checklist](#appendix-a--file-inventory-checklist).*
+## Phase A change log
+
+The Phase A rollout (PRs 1-10) extended IVE with hosted-LLM enrichment, multi-user auth, and a per-column data-egress sensitivity model. This section is the at-a-glance pointer for what changed and where.
+
+| PR | Title | Where |
+|---|---|---|
+| 1 | LLM package + Phase A migrations | [src/ive/llm/](src/ive/llm/), [src/ive/db/models.py](src/ive/db/models.py), `alembic/versions/20260427_120{0..3}_*.py` |
+| 2 | Multi-user auth (api_keys table extension, scopes, audit log) | [src/ive/auth/](src/ive/auth/), [src/ive/api/v1/endpoints/api_keys.py](src/ive/api/v1/endpoints/api_keys.py) |
+| 3 | Per-column sensitivity (`dataset_column_metadata` + endpoints + auto-create on upload) | [src/ive/db/repositories/dataset_column_metadata_repo.py](src/ive/db/repositories/dataset_column_metadata_repo.py), [src/ive/api/v1/endpoints/column_metadata.py](src/ive/api/v1/endpoints/column_metadata.py), [src/ive/auth/egress.py](src/ive/auth/egress.py) |
+| 4 | `generate_llm_explanations` Celery task + chained from `run_experiment` | [src/ive/workers/llm_enrichment.py](src/ive/workers/llm_enrichment.py), [src/ive/workers/tasks.py](src/ive/workers/tasks.py), [src/ive/db/repositories/llm_explanation_repo.py](src/ive/db/repositories/llm_explanation_repo.py), [src/ive/llm/payloads.py](src/ive/llm/payloads.py), [src/ive/llm/rule_based.py](src/ive/llm/rule_based.py) |
+| 5 | `explanation_source` / `llm_explanation_pending` on responses + endpoint LLM-prefer logic | [src/ive/api/v1/schemas/latent_variable_schemas.py](src/ive/api/v1/schemas/latent_variable_schemas.py), [src/ive/api/v1/schemas/experiment_schemas.py](src/ive/api/v1/schemas/experiment_schemas.py), [src/ive/api/v1/endpoints/experiments.py](src/ive/api/v1/endpoints/experiments.py), [src/ive/api/v1/endpoints/latent_variables.py](src/ive/api/v1/endpoints/latent_variables.py) |
+| 6 | AI-assisted badge on Streamlit results + dataset-level sensitivity banner | [streamlit_app/components/theme.py](streamlit_app/components/theme.py), [streamlit_app/pages/04_results.py](streamlit_app/pages/04_results.py) |
+| 7 | Streamlit Dataset Settings page (column-sensitivity editor) | [streamlit_app/pages/06_dataset_settings.py](streamlit_app/pages/06_dataset_settings.py) |
+| 8 | Sensitive-data egress E2E test (CI gate on `docs/RESPONSE_CONTRACT.md` §13) | [tests/integration/test_sensitive_data_egress.py](tests/integration/test_sensitive_data_egress.py) |
+| 9 | `docs/RESPONSE_CONTRACT.md` v1 (15 sections, ~3,100 words) | [docs/RESPONSE_CONTRACT.md](docs/RESPONSE_CONTRACT.md) |
+| 10 | This update — AGENTS.md threading | (this file) |
+
+**Total Phase A test footprint**: 455 unit + integration tests passing; 4 alembic migrations forward + downgrade clean. Lint clean across all touched files.
+
+---
+
+*Last updated: 2026-04-28 (Phase A complete). When you make architectural or interface changes, update the relevant section AND the [File Inventory Checklist](#appendix-a--file-inventory-checklist).*

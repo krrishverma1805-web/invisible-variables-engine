@@ -1,0 +1,70 @@
+name: Migrations Check
+
+# Plan §111 + §148 — every alembic migration must declare a deploy
+# directive in its docstring. Plus we enforce a single alembic head so
+# multi-branch landings don't silently introduce conflicts.
+
+on:
+  pull_request:
+    branches: ["main"]
+  push:
+    branches: ["main"]
+
+jobs:
+  deploy-directive:
+    name: migration-directive-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate every migration has a deploy directive
+        run: |
+          set -eu
+          fail=0
+          for f in alembic/versions/*.py; do
+            if [ ! -f "$f" ]; then continue; fi
+            # Match the literal grammar from RESPONSE_CONTRACT.md §10:
+            #   ^deploy: (schema-first|code-first|same-release)( \| reason: .+)?$
+            if ! grep -E '^deploy: (schema-first|code-first|same-release)( \| reason: .+)?$' "$f" >/dev/null; then
+              echo "::error file=$f::Missing deploy directive (schema-first | code-first | same-release)."
+              fail=1
+            fi
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo ""
+            echo "::error::Add a single line to the migration docstring:"
+            echo "::error::    deploy: schema-first   (column read at startup)"
+            echo "::error::    deploy: code-first     (column written by new code only)"
+            echo "::error::    deploy: same-release   (atomic — both must land together)"
+            exit 1
+          fi
+          echo "All migrations declare a deploy directive."
+
+  alembic-heads-single:
+    name: alembic-heads-single
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install poetry==1.8.3
+      - run: poetry install --no-interaction --no-ansi
+      - name: Confirm single alembic head
+        env:
+          DATABASE_URL: postgresql+asyncpg://x:x@localhost/x
+          SYNC_DATABASE_URL: postgresql+psycopg2://x:x@localhost/x
+          SECRET_KEY: ci
+          VALID_API_KEYS: dev-key-1
+        run: |
+          set -eu
+          PYTHONPATH=src poetry run alembic heads > /tmp/heads.txt
+          n=$(wc -l < /tmp/heads.txt)
+          if [ "$n" -ne 1 ]; then
+            echo "::error::Found $n alembic heads; expected 1."
+            cat /tmp/heads.txt
+            echo ""
+            echo "::error::Run: poetry run alembic merge -m 'merge_<reason>' <head_a> <head_b>"
+            echo "::error::Then commit the resulting migration file (with deploy: same-release)."
+            exit 1
+          fi
+          echo "Single alembic head: $(cat /tmp/heads.txt)"

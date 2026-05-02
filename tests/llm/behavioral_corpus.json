@@ -1,0 +1,149 @@
+{
+  "schema_version": "v1",
+  "description": "Behavioral test corpus for the LLM validator stack. Each entry is a (facts, expected_validator_outcome, allow_causal) tuple meant to exercise the validator against canonical real-shaped inputs and outputs. Run weekly against the live Groq endpoint to detect prompt drift; run inline (mocked) on every PR.",
+  "cases": [
+    {
+      "id": "behav-01-clean-pass",
+      "facts": {
+        "name": "is_weekend",
+        "effect_size": 0.42,
+        "p_value": 0.012,
+        "presence_rate": 0.83,
+        "subgroup_size": 240
+      },
+      "model_output": "On weekends, observations are associated with an effect size of 0.42 (p=0.012). The pattern was observed in 240 records, approximately 83% of the segment.",
+      "allow_causal": false,
+      "expected_passes": true
+    },
+    {
+      "id": "behav-02-hedged-causal-allowed",
+      "facts": {
+        "name": "is_high_volume",
+        "effect_size": 0.3,
+        "p_value": 0.04,
+        "presence_rate": 0.5,
+        "subgroup_size": 100
+      },
+      "model_output": "High-volume traffic appears to drives an increase in delivery time (effect 0.30, p=0.04, observed in 100 records). The pattern is associated with peak hours.",
+      "allow_causal": false,
+      "expected_passes": false,
+      "expected_failure_contains": [
+        "causal"
+      ]
+    },
+    {
+      "id": "behav-03-explicit-causal-flag",
+      "facts": {
+        "name": "is_high_volume",
+        "effect_size": 0.3,
+        "p_value": 0.04,
+        "presence_rate": 0.5,
+        "subgroup_size": 100
+      },
+      "model_output": "High-volume traffic causes an increase in delivery time (effect 0.30, p=0.04). The pattern was observed in 100 records.",
+      "allow_causal": true,
+      "expected_passes": true
+    },
+    {
+      "id": "behav-04-derived-percentage-ok",
+      "facts": {
+        "name": "is_seg",
+        "effect_size": 0.4,
+        "p_value": 0.012,
+        "presence_rate": 0.4,
+        "subgroup_size": 100
+      },
+      "model_output": "The pattern is associated with 40% of the sample (effect 0.40, p=0.012). The complementary 60% does not show this signal.",
+      "allow_causal": false,
+      "expected_passes": true
+    },
+    {
+      "id": "behav-05-rejected-lv",
+      "facts": {
+        "name": "is_temp_high",
+        "effect_size": 0.05,
+        "p_value": 0.31,
+        "presence_rate": 0.2,
+        "subgroup_size": 80,
+        "status": "rejected"
+      },
+      "model_output": "Temperature-high segment was tested but did not pass stability validation (effect 0.05, p=0.31). The signal was observed in 80 records, approximately 20% of the cohort.",
+      "allow_causal": false,
+      "expected_passes": true
+    },
+    {
+      "id": "behav-06-multi-fact-narrative",
+      "facts": {
+        "name": "is_morning",
+        "effect_size": 0.18,
+        "p_value": 0.008,
+        "presence_rate": 0.55,
+        "subgroup_size": 320
+      },
+      "model_output": "Morning hours are associated with a moderate effect on the outcome (effect 0.18, p=0.008). Across 320 records, the segment represents 55% of the data; the remaining 45% does not show this pattern.",
+      "allow_causal": false,
+      "expected_passes": true
+    },
+    {
+      "id": "behav-07-numeric-overflow",
+      "facts": {
+        "name": "is_x",
+        "effect_size": 0.4,
+        "p_value": 0.01,
+        "presence_rate": 0.5,
+        "subgroup_size": 100
+      },
+      "model_output": "This segment shows an effect of 1.95 — well outside the range of any input fact.",
+      "allow_causal": false,
+      "expected_passes": false,
+      "expected_failure_contains": [
+        "ground_check"
+      ]
+    },
+    {
+      "id": "behav-08-banned-superlative",
+      "facts": {
+        "name": "is_x",
+        "effect_size": 0.4,
+        "p_value": 0.01,
+        "presence_rate": 0.5,
+        "subgroup_size": 100
+      },
+      "model_output": "This always indicates a delivery delay (effect 0.4, p=0.01).",
+      "allow_causal": false,
+      "expected_passes": false,
+      "expected_failure_contains": [
+        "always"
+      ]
+    },
+    {
+      "id": "behav-09-warn-only-due-to-with-hedge",
+      "facts": {
+        "name": "is_seg",
+        "effect_size": 0.4,
+        "p_value": 0.01,
+        "presence_rate": 0.5,
+        "subgroup_size": 100
+      },
+      "model_output": "Slowdowns may be due to high traffic (effect 0.4, p=0.01); the pattern is associated with peak hours, present in approximately 50% of records over 100 samples.",
+      "allow_causal": false,
+      "expected_passes": true
+    },
+    {
+      "id": "behav-10-warn-only-due-to-no-hedge",
+      "facts": {
+        "name": "is_seg",
+        "effect_size": 0.4,
+        "p_value": 0.01,
+        "presence_rate": 0.5,
+        "subgroup_size": 100
+      },
+      "model_output": "Slowdowns are due to high traffic (effect 0.4, p=0.01). The pattern shows in 100 records, exactly 50% of the cohort.",
+      "allow_causal": false,
+      "expected_passes": false,
+      "expected_failure_contains": [
+        "due to"
+      ]
+    }
+  ]
+}

@@ -24,6 +24,7 @@ from ive.api.v1.dependencies import get_db, get_pagination
 from ive.api.v1.schemas.latent_variable_schemas import (
     LatentVariableListResponse,
     LatentVariableResponse,
+    serialize_lv,
 )
 from ive.db.models import LatentVariable
 from ive.db.repositories.latent_variable_repo import LatentVariableRepository
@@ -74,7 +75,7 @@ async def list_latent_variables(
     rows = list(paged.scalars().all())
 
     return LatentVariableListResponse(
-        variables=[LatentVariableResponse.model_validate(r) for r in rows],
+        variables=[serialize_lv(r) for r in rows],
         total=total,
         skip=skip,
         limit=limit,
@@ -103,7 +104,7 @@ async def get_latent_variable(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Latent variable {variable_id} not found.",
         )
-    return LatentVariableResponse.model_validate(variable)
+    return serialize_lv(variable)
 
 
 # ---------------------------------------------------------------------------

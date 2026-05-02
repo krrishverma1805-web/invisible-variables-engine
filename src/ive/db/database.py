@@ -149,3 +149,13 @@ def get_engine() -> AsyncEngine:
     if _engine is None:
         raise RuntimeError("Database not initialised — call init_db() first.")
     return _engine
+
+
+def get_session_factory() -> async_sessionmaker[AsyncSession] | None:
+    """Return the configured async session factory, or ``None`` if not initialised.
+
+    Unlike :func:`get_session` this does **not** raise — the auth
+    middleware and other early-path callers need to check whether the DB
+    is wired up and degrade gracefully when it is not (e.g. tests).
+    """
+    return _async_session_factory

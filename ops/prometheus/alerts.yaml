@@ -1,0 +1,142 @@
+# IVE Prometheus alert rules (plan §C4 + §35).
+#
+# Drop into a Prometheus deployment by mounting at
+# /etc/prometheus/rules/ive_alerts.yaml and referencing in prometheus.yml:
+#
+#     rule_files:
+#       - /etc/prometheus/rules/ive_alerts.yaml
+#
+# Each alert maps to a runbook in docs/runbooks/.
+# Alert names use the convention: ive_<system>_<condition>.
+
+groups:
+  - name: ive_llm_health
+    interval: 30s
+    rules:
+      # Plan §35: fallback rate > 20% over 5min sustained for 5min.
+      - alert: ive_llm_fallback_rate_high
+        expr: |
+          (
+            sum(rate(ive_llm_fallback_total[5m]))
+            /
+            clamp_min(sum(rate(ive_llm_request_total[5m])) + sum(rate(ive_llm_fallback_total[5m])), 1)
+          ) > 0.20
+        for: 5m
+        labels:
+          severity: warning
+          team: ml-platform
+        annotations:
+          summary: "IVE LLM fallback rate above 20% for 5m"
+          description: |
+            More than 20% of LLM generations are falling back to rule-based
+            output. This usually indicates Groq/upstream LLM degradation,
+            credentials issues, or a bad prompt deploy.
+          runbook: "docs/runbooks/groq_circuit_breaker_open.md"
+
+      # Plan §93 + §164: validation failures spike (~prompt drift / model regression).
+      - alert: ive_llm_validation_failure_rate_high
+        expr: |
+          sum(rate(ive_llm_validation_failed_total[10m])) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+          team: ml-platform
+        annotations:
+          summary: "LLM validation failures > 0.5/sec sustained 10m"
+          description: |
+            The composite validator is rejecting outputs at high rate.
+            Investigate prompt regressions or upstream model drift.
+          runbook: "docs/runbooks/validation_failure_rate_spike.md"
+
+      # Circuit breaker open for >5m: persistent upstream outage.
+      - alert: ive_llm_circuit_breaker_open
+        expr: max(ive_llm_circuit_breaker_state) == 1
+        for: 5m
+        labels:
+          severity: critical
+          team: ml-platform
+        annotations:
+          summary: "LLM circuit breaker open >5m"
+          description: |
+            The Groq breaker has been open for at least 5 minutes; LLM
+            enrichment is fully suppressed. Check upstream status.
+          runbook: "docs/runbooks/groq_circuit_breaker_open.md"
+
+      # Plan §41 + §163: daily token budget burn rate.
+      - alert: ive_llm_daily_token_budget_burnrate
+        expr: |
+          increase(ive_llm_tokens_total{kind="total"}[1h]) > 100000
+        for: 30m
+        labels:
+          severity: warning
+          team: ml-platform
+        annotations:
+          summary: "LLM tokens burning > 100k / hour for 30m"
+          description: |
+            At this rate the daily token budget will be exhausted before
+            the day rolls. Investigate runaway experiments or scope reductions.
+          runbook: "docs/runbooks/token_budget_exceeded.md"
+
+  - name: ive_pipeline_health
+    interval: 60s
+    rules:
+      - alert: ive_pipeline_failure_rate_high
+        expr: |
+          (
+            sum(rate(ive_phase_failed_total[15m]))
+            /
+            clamp_min(sum(rate(ive_phase_duration_seconds_count[15m])), 1)
+          ) > 0.05
+        for: 15m
+        labels:
+          severity: warning
+          team: ml-platform
+        annotations:
+          summary: "Pipeline phase failure rate > 5% for 15m"
+          runbook: "docs/runbooks/pipeline_failure_rate.md"
+
+      - alert: ive_phase_p95_duration_regression
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (phase, le) (rate(ive_phase_duration_seconds_bucket[30m]))
+          ) > 1800
+        for: 15m
+        labels:
+          severity: warning
+          team: ml-platform
+        annotations:
+          summary: "Pipeline phase P95 duration > 30 min"
+          runbook: "docs/runbooks/benchmark_regression.md"
+
+  - name: ive_fpr_sentinel
+    interval: 5m
+    rules:
+      # Plan §C4 + §190: synthetic-noise FPR upper bound > 7%.
+      - alert: ive_fpr_sentinel_red
+        expr: ive_fpr_sentinel_value > 0.07
+        for: 1h
+        labels:
+          severity: critical
+          team: ml-platform
+        annotations:
+          summary: "FPR sentinel measured FPR > 7% for >1h"
+          description: |
+            The bootstrap-validator FPR on synthetic noise has exceeded the
+            7% safety target. Subgroup discovery may be over-firing.
+          runbook: "docs/runbooks/fpr_sentinel_red.md"
+
+  - name: ive_auth
+    interval: 60s
+    rules:
+      # Plan §156: auth failure spike — possible compromised key or config drift.
+      - alert: ive_auth_failure_spike
+        expr: |
+          sum(rate(starlette_requests_total{status=~"401|403"}[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Auth failures > 1/sec for 5m"
+          runbook: "docs/runbooks/auth_failure_spike.md"
